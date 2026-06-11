@@ -5,8 +5,7 @@
 # ====== 第一阶段：构建 ======
 FROM node:18-alpine AS builder
 
-# 配置国内镜像源
-RUN npm config set registry https://registry.npmmirror.com
+RUN npm config set registry https://registry.npmjs.org
 
 WORKDIR /app
 
@@ -25,8 +24,7 @@ RUN npm run build
 # ====== 第二阶段：运行 ======
 FROM nginx:alpine
 
-# 配置国内镜像源
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
+# Alpine uses default repos
 
 # 复制nginx配置
 COPY docker/frontend/nginx.conf /etc/nginx/conf.d/default.conf

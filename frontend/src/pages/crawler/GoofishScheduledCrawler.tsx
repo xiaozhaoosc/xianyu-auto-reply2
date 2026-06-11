@@ -5,6 +5,9 @@ import { getAccountDetails } from '@/api/accounts'
 import {
   createGoofishCrawlJob,
   deleteGoofishCrawlJob,
+  fetchItemsById,
+  fetchItemsBySeller,
+  importCrawlItemsToMaterials,
   listGoofishCrawlItems,
   listGoofishCrawlJobs,
   runOnceGoofishCrawlJob,
@@ -79,6 +82,21 @@ export function GoofishScheduledCrawler() {
   const [itemsLoading, setItemsLoading] = useState(false)
   const [items, setItems] = useState<GoofishCrawlItem[]>([])
   const [deleteJob, setDeleteJob] = useState<GoofishCrawlJob | null>(null)
+
+  const [minWantCount, setMinWantCount] = useState(0)
+  const [minViewCount, setMinViewCount] = useState(0)
+  const [importing, setImporting] = useState(false)
+
+  const [fetchIdInput, setFetchIdInput] = useState('')
+  const [fetchIdResults, setFetchIdResults] = useState<GoofishCrawlItem[]>([])
+  const [fetchIdLoading, setFetchIdLoading] = useState(false)
+
+  const [sellerInput, setSellerInput] = useState('')
+  const [sellerMinWant, setSellerMinWant] = useState(100)
+  const [sellerMinView, setSellerMinView] = useState(300)
+  const [sellerMaxPages, setSellerMaxPages] = useState(5)
+  const [sellerResults, setSellerResults] = useState<GoofishCrawlItem[]>([])
+  const [sellerLoading, setSellerLoading] = useState(false)
 
   const loadAccountsAndJobs = async () => {
     try {
@@ -243,6 +261,109 @@ export function GoofishScheduledCrawler() {
     }
   }
 
+  const importToMaterials = async () => {
+    if (!itemsJob) return
+    try {
+      setImporting(true)
+      const res = await importCrawlItemsToMaterials(itemsJob.id, {
+        min_want_count: minWantCount,
+        min_view_count: minViewCount,
+      })
+      if (res.success) {
+        addToast({
+          type: 'success',
+          message: res.message || `导入成功：${res.data?.imported || 0} 条`,
+        })
+      } else {
+        addToast({ type: 'error', message: res.message || '导入失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '导入失败' })
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const handleFetchById = async () => {
+    if (!cookieId) {
+      addToast({ type: 'warning', message: '请先选择账号' })
+      return
+    }
+    const ids = fetchIdInput
+      .split(/[\n,，\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (ids.length === 0) {
+      addToast({ type: 'warning', message: '请输入至少一个 item_id' })
+      return
+    }
+    if (ids.length > 20) {
+      addToast({ type: 'warning', message: '最多同时采集 20 个' })
+      return
+    }
+    try {
+      setFetchIdLoading(true)
+      setFetchIdResults([])
+      const res = await fetchItemsById({ item_ids: ids, cookie_id: cookieId })
+      if (res.success && res.data) {
+        setFetchIdResults(res.data.items || [])
+        addToast({
+          type: 'success',
+          message: `采集完成：成功 ${res.data.success_count} 个，失败 ${res.data.error_count} 个`,
+        })
+      } else {
+        addToast({ type: 'error', message: res.message || '采集失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '采集失败' })
+    } finally {
+      setFetchIdLoading(false)
+    }
+  }
+
+  const handleFetchBySeller = async () => {
+    if (!cookieId) {
+      addToast({ type: 'warning', message: '请先选择账号' })
+      return
+    }
+    const ids = sellerInput
+      .split(/[\n,，\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (ids.length === 0) {
+      addToast({ type: 'warning', message: '请输入至少一个卖家 userId' })
+      return
+    }
+    if (ids.length > 10) {
+      addToast({ type: 'warning', message: '最多同时采集 10 个卖家' })
+      return
+    }
+    try {
+      setSellerLoading(true)
+      setSellerResults([])
+      const res = await fetchItemsBySeller({
+        user_ids: ids,
+        cookie_id: cookieId,
+        min_want_count: sellerMinWant,
+        min_view_count: sellerMinView,
+        max_pages: sellerMaxPages,
+      })
+      if (res.success && res.data) {
+        setSellerResults(res.data.items || [])
+        addToast({
+          type: 'success',
+          message: `采集完成：成功 ${res.data.success_count} 个商品，失败 ${res.data.error_count} 个卖家`,
+        })
+      } else {
+        addToast({ type: 'error', message: res.message || '采集失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '采集失败' })
+    } finally {
+      setSellerLoading(false)
+    }
+  }
+
   if (loadingPage) return <PageLoading />
 
   const runningCount = jobs.filter((j) => j.running).length
@@ -339,6 +460,166 @@ export function GoofishScheduledCrawler() {
               </button>
             </div>
           </form>
+        </div>
+      </motion.div>
+
+      {/* 按 ID 采集 */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="vben-card">
+        <div className="vben-card-body">
+          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">按 ID 采集</div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <div className="input-group lg:col-span-2">
+              <label className="input-label">商品 ID（每行一个或用逗号分隔，最多 20 个）</label>
+              <textarea
+                value={fetchIdInput}
+                onChange={(e) => setFetchIdInput(e.target.value)}
+                className="input-ios min-h-[80px]"
+                placeholder={'1014128530852\n1014128530853\n或从 URL 提取：\nhttps://www.goofish.com/item?id=1014128530852'}
+                rows={3}
+              />
+            </div>
+            <div className="flex flex-col justify-end gap-2">
+              <button
+                className="btn-ios-primary"
+                onClick={handleFetchById}
+                disabled={fetchIdLoading || !cookieId}
+              >
+                {fetchIdLoading ? '采集中...' : '开始采集'}
+              </button>
+              <div className="text-xs text-slate-500">
+                {cookieId ? `使用账号: ${cookieId}` : '请先选择账号'}
+              </div>
+            </div>
+          </div>
+          {fetchIdResults.length > 0 && (
+            <div className="mt-3 space-y-2 max-h-[300px] overflow-auto pr-1">
+              {fetchIdResults.map((it) => (
+                <div key={it.item_id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                        {it.title || it.item_id}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {it.price ? `￥${it.price}` : '-'}
+                        {' · '}
+                        想要 {it.want_count ?? 0}
+                        {' · '}
+                        浏览 {it.view_count ?? 0}
+                      </div>
+                      {it.description && (
+                        <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">
+                          {it.description}
+                        </div>
+                      )}
+                    </div>
+                    {it.item_url && (
+                      <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
+
+      {/* 按卖家采集 */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="vben-card">
+        <div className="vben-card-body">
+          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">按卖家采集</div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <div className="input-group lg:col-span-2">
+              <label className="input-label">卖家 userId（每行一个或用逗号分隔，最多 10 个）</label>
+              <textarea
+                value={sellerInput}
+                onChange={(e) => setSellerInput(e.target.value)}
+                className="input-ios min-h-[80px]"
+                placeholder={'2216005943308\n从卖家主页 URL 提取：\nhttps://www.goofish.com/personal?userId=2216005943308'}
+                rows={3}
+              />
+            </div>
+            <div className="flex flex-col justify-end gap-2">
+              <button
+                className="btn-ios-primary"
+                onClick={handleFetchBySeller}
+                disabled={sellerLoading || !cookieId}
+              >
+                {sellerLoading ? '采集中...' : '开始采集'}
+              </button>
+              <div className="text-xs text-slate-500">
+                {cookieId ? `使用账号: ${cookieId}` : '请先选择账号'}
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+            <div className="input-group">
+              <label className="input-label">最小想要人数</label>
+              <input
+                type="number"
+                min={0}
+                value={sellerMinWant}
+                onChange={(e) => setSellerMinWant(Number(e.target.value || 0))}
+                className="input-ios"
+              />
+            </div>
+            <div className="input-group">
+              <label className="input-label">最小浏览量</label>
+              <input
+                type="number"
+                min={0}
+                value={sellerMinView}
+                onChange={(e) => setSellerMinView(Number(e.target.value || 0))}
+                className="input-ios"
+              />
+            </div>
+            <div className="input-group">
+              <label className="input-label">最大翻页数</label>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={sellerMaxPages}
+                onChange={(e) => setSellerMaxPages(Number(e.target.value || 5))}
+                className="input-ios"
+              />
+            </div>
+          </div>
+          {sellerResults.length > 0 && (
+            <div className="mt-3 space-y-2 max-h-[300px] overflow-auto pr-1">
+              {sellerResults.map((it) => (
+                <div key={it.item_id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                        {it.title || it.item_id}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {it.price ? `￥${it.price}` : '-'}
+                        {' · '}
+                        想要 {it.want_count ?? 0}
+                        {' · '}
+                        浏览 {it.view_count ?? 0}
+                        {it.seller_name && ` · ${it.seller_name}`}
+                      </div>
+                      {it.description && (
+                        <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">
+                          {it.description}
+                        </div>
+                      )}
+                    </div>
+                    {it.item_url && (
+                      <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </motion.div>
 
@@ -488,6 +769,46 @@ export function GoofishScheduledCrawler() {
                     </button>
                   </div>
                 </div>
+
+                {/* 筛选 + 导入素材库 */}
+                {items.length > 0 && (
+                  <div className="flex flex-wrap items-end gap-3 mb-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                    <div className="input-group">
+                      <label className="input-label">最小想要人数</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={minWantCount}
+                        onChange={(e) => setMinWantCount(Number(e.target.value || 0))}
+                        className="input-ios w-28"
+                        placeholder="0"
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label className="input-label">最小浏览量</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={minViewCount}
+                        onChange={(e) => setMinViewCount(Number(e.target.value || 0))}
+                        className="input-ios w-28"
+                        placeholder="0"
+                      />
+                    </div>
+                    <button
+                      className="btn-ios-primary"
+                      onClick={importToMaterials}
+                      disabled={importing || itemsLoading}
+                    >
+                      {importing ? '导入中...' : '导入素材库'}
+                    </button>
+                    <div className="text-xs text-slate-500">
+                      共 {items.length} 条采集结果
+                      {(minWantCount > 0 || minViewCount > 0) &&
+                        ` · 筛选：想要≥${minWantCount} 浏览≥${minViewCount}`}
+                    </div>
+                  </div>
+                )}
 
                 {itemsLoading ? (
                   <div className="text-sm text-slate-500">加载中...</div>

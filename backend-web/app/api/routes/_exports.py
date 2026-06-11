@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 # 导入所有路由模块
 from . import (
+    account_sync,
     activation,
     admin,
     advertisements,
@@ -155,6 +156,9 @@ api_router.include_router(goofish_tasks.router, tags=["Goofish采集任务"])  #
 
 # 黑名单管理
 api_router.include_router(blacklist.router, tags=["黑名单管理"])  # 已定义prefix="/blacklist"
+
+# 账号同步
+api_router.include_router(account_sync.router, prefix="/account-sync", tags=["账号同步"])
 
 # 搜索
 api_router.include_router(search.router, tags=["商品搜索"])  # 已定义prefix="/search"
