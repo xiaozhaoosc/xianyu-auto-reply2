@@ -2338,30 +2338,9 @@ class DBManager:
 此邮件由系统自动发送，请勿直接回复
 © 2025 闲鱼自动回复系统"""
 
-            # 使用GET请求发送邮件
-            api_url = "https://dy.zhinianboke.com/api/emailSend"
-            params = {
-                'subject': subject,
-                'receiveUser': email,
-                'sendHtml': text_content
-            }
-
-            async with aiohttp.ClientSession() as session:
-                try:
-                    logger.info(f"发送验证码邮件: {email}")
-                    async with session.get(api_url, params=params, timeout=15) as response:
-                        response_text = await response.text()
-                        logger.info(f"邮件API响应: {response.status}")
-
-                        if response.status == 200:
-                            logger.info(f"验证码邮件发送成功: {email}")
-                            return True
-                        else:
-                            logger.error(f"验证码邮件发送失败: {email}, 状态码: {response.status}, 响应: {response_text[:200]}")
-                            return False
-                except Exception as e:
-                    logger.error(f"邮件发送异常: {email}, 错误: {e}")
-                    return False
+            # [已禁用] dy.zhinianboke.com/api/emailSend 外部接口不再调用
+            logger.warning(f"邮件发送功能已禁用，跳过发送验证码邮件: {email}")
+            return False
 
         except Exception as e:
             logger.error(f"发送验证码邮件异常: {e}")

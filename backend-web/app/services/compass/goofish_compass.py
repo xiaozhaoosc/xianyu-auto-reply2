@@ -645,6 +645,297 @@ class GoofishCompassService:
             except Exception:
                 pass
 
+    async def fetch_by_item_id(self, item_id: str) -> dict[str, Any]:
+        """通过 item_id 直接抓取单个商品详情"""
+        if not PLAYWRIGHT_AVAILABLE:
+            return {"error": "Playwright 不可用"}
+
+        item_id = str(item_id).strip()
+        if not item_id:
+            return {"error": "item_id 不能为空"}
+
+        try:
+            await self.browser.init_browser(headless=self.config.headless)
+            await self.browser.navigate_to("https://www.goofish.com", timeout=self.config.navigation_timeout_ms)
+            await self.browser.set_cookies(self.cookie_value)
+            if self.browser.page:
+                await self.browser.page.reload()
+            await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
+
+            # 构造商品详情 URL
+            item_url = self._canonical_item_url(item_id)
+            base_item = {"item_id": item_id, "item_url": item_url}
+
+            # 复用现有的详情抓取逻辑
+            detail = await self._fetch_single_detail(base_item)
+
+            if not detail or detail.get("detail_error"):
+                return {
+                    "error": detail.get("detail_error", "抓取失败"),
+                    "item_id": item_id,
+                    "item_url": item_url,
+                }
+
+            # 合并基础信息和详情
+            result = {
+                "item_id": item_id,
+                "item_url": item_url,
+                "title": detail.get("title", ""),
+                "price": detail.get("price", ""),
+                "area": detail.get("area", ""),
+                "seller_name": detail.get("seller_name", ""),
+                "main_image": detail.get("main_image", ""),
+                "publish_time": detail.get("publish_time", ""),
+                "want_count": detail.get("want_count"),
+                "view_count": detail.get("view_count"),
+                "description": detail.get("description", ""),
+            }
+            return {"items": [result], "total": 1}
+
+        except Exception as e:
+            logger.error(f"按ID采集失败: {e}")
+            return {"error": str(e), "item_id": item_id}
+        finally:
+            try:
+                await self.browser.close_browser()
+            except Exception:
+                pass
+
+    async def fetch_by_user_id(
+        self,
+        user_id: str,
+        min_want_count: int = 0,
+        min_view_count: int = 0,
+        max_pages: int = 5,
+    ) -> dict[str, Any]:
+        """通过 userId 抓取卖家主页的商品列表，支持筛选"""
+        if not PLAYWRIGHT_AVAILABLE:
+            return {"error": "Playwright 不可用"}
+
+        user_id = str(user_id).strip()
+        if not user_id:
+            return {"error": "userId 不能为空"}
+
+        max_pages = max(1, min(int(max_pages), 20))
+        items: list[dict[str, Any]] = []
+
+        try:
+            await self.browser.init_browser(headless=self.config.headless)
+            await self.browser.navigate_to("https://www.goofish.com", timeout=self.config.navigation_timeout_ms)
+            await self.browser.set_cookies(self.cookie_value)
+            if self.browser.page:
+                await self.browser.page.reload()
+            await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
+
+            # 访问卖家主页
+            seller_url = f"https://www.goofish.com/personal?userId={user_id}"
+            await self.browser.navigate_to(seller_url, timeout=self.config.navigation_timeout_ms)
+            await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
+            await asyncio.sleep(2)
+
+            # 处理验证码
+            captcha_ok = await self.slider_handler.handle_verification(
+                page=self.browser.page,
+                context=self.browser.context,
+                max_retries=3,
+                allow_manual=not bool(self.config.headless),
+            )
+            if not captcha_ok:
+                return {"error": "captcha_failed", "items": [], "total": 0}
+
+            # 逐页采集
+            seen_ids: set[str] = set()
+            for page_num in range(max_pages):
+                # 从 DOM 提取商品列表
+                page_items = await self._extract_items_from_page()
+                if not page_items:
+                    break
+
+                for item in page_items:
+                    item_id = str(item.get("item_id", ""))
+                    if not item_id or item_id in seen_ids:
+                        continue
+                    seen_ids.add(item_id)
+
+                    # 应用筛选条件
+                    want = item.get("want_count") or 0
+                    view = item.get("view_count") or 0
+                    if min_want_count > 0 and want < min_want_count:
+                        continue
+                    if min_view_count > 0 and view < min_view_count:
+                        continue
+
+                    item["item_url"] = self._canonical_item_url(item_id)
+                    items.append(item)
+
+                # 翻页
+                if page_num < max_pages - 1:
+                    has_next = await self._scroll_next_page()
+                    if not has_next:
+                        break
+                    await asyncio.sleep(1.5)
+
+            return {"items": items, "total": len(items), "user_id": user_id}
+
+        except Exception as e:
+            logger.error(f"按卖家采集失败: {e}")
+            return {"error": str(e), "items": [], "total": 0, "user_id": user_id}
+        finally:
+            try:
+                await self.browser.close_browser()
+            except Exception:
+                pass
+
+    async def _extract_items_from_page(self) -> list[dict[str, Any]]:
+        """从当前页面 DOM 提取商品列表"""
+        if not self.browser.page:
+            return []
+        try:
+            items = await self.browser.page.evaluate("""
+                () => {
+                    const results = [];
+                    // 尝试多种选择器匹配商品卡片
+                    const cards = document.querySelectorAll(
+                        '[class*="item-card"], [class*="feed-item"], [class*="product-card"], [class*="goods-item"], a[href*="/item?id="]'
+                    );
+                    for (const card of cards) {
+                        const titleEl = card.querySelector('[class*="title"], h3, h2, [class*="name"]');
+                        const priceEl = card.querySelector('[class*="price"]');
+                        const imgEl = card.querySelector('img[src*="img.alicdn"], img[src*="goofish"]');
+                        const linkEl = card.closest('a[href*="/item?id="]') || card.querySelector('a[href*="/item?id="]');
+                        
+                        let itemId = '';
+                        if (linkEl) {
+                            const href = linkEl.getAttribute('href') || '';
+                            const match = href.match(/[?&]id=(\d+)/);
+                            if (match) itemId = match[1];
+                        }
+                        
+                        // 尝试提取想要数和浏览量
+                        const statsText = card.innerText || '';
+                        const wantMatch = statsText.match(/想要\s*(\d+)/);
+                        const viewMatch = statsText.match(/浏览\s*(\d+)/);
+                        const wantViewMatch = statsText.match(/(\d+)\s*想要.*?(\d+)\s*浏览/);
+                        
+                        if (titleEl && itemId) {
+                            results.push({
+                                item_id: itemId,
+                                title: (titleEl.innerText || '').trim().substring(0, 200),
+                                price: (priceEl ? priceEl.innerText : '').replace(/[^\\d.]/g, ''),
+                                main_image: imgEl ? imgEl.src : '',
+                                want_count: wantViewMatch ? parseInt(wantViewMatch[1]) : (wantMatch ? parseInt(wantMatch[1]) : null),
+                                view_count: wantViewMatch ? parseInt(wantViewMatch[2]) : (viewMatch ? parseInt(viewMatch[1]) : null),
+                            });
+                        }
+                    }
+                    return results;
+                }
+            """)
+            return items or []
+        except Exception as e:
+            logger.warning(f"从页面提取商品失败: {e}")
+            return []
+
+    async def _scroll_next_page(self) -> bool:
+        """滚动页面加载更多，返回是否还有更多内容"""
+        if not self.browser.page:
+            return False
+        try:
+            prev_height = await self.browser.page.evaluate("document.body.scrollHeight")
+            await self.browser.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(2)
+            new_height = await self.browser.page.evaluate("document.body.scrollHeight")
+
+            # 尝试点击"加载更多"按钮
+            try:
+                load_more = await self.browser.page.query_selector(
+                    '[class*="load-more"], [class*="LoadMore"], button:has-text("加载更多"), button:has-text("查看更多")'
+                )
+                if load_more:
+                    await load_more.click()
+                    await asyncio.sleep(1.5)
+            except Exception:
+                pass
+
+            return new_height > prev_height
+        except Exception:
+            return False
+
+    async def fetch_by_seller(
+        self,
+        user_id: str,
+        min_want_count: int = 0,
+        min_view_count: int = 0,
+        max_pages: int = 5,
+    ) -> dict[str, Any]:
+        """按卖家采集：访问卖家主页，提取所有商品，支持筛选条件"""
+        if not PLAYWRIGHT_AVAILABLE:
+            return {"items": [], "total": 0, "error": "Playwright 不可用"}
+
+        user_id = str(user_id).strip()
+        if not user_id:
+            return {"items": [], "total": 0, "error": "卖家 userId 不能为空"}
+
+        max_pages = max(1, min(int(max_pages), 20))
+
+        try:
+            await self.browser.init_browser(headless=self.config.headless)
+            await self.browser.navigate_to("https://www.goofish.com", timeout=self.config.navigation_timeout_ms)
+            await self.browser.set_cookies(self.cookie_value)
+
+            if self.browser.page:
+                await self.browser.page.reload()
+            await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
+
+            # 访问卖家主页
+            seller_url = f"https://www.goofish.com/personal?userId={user_id}"
+            await self.browser.navigate_to(seller_url, timeout=self.config.navigation_timeout_ms)
+            await asyncio.sleep(3)
+
+            # 处理验证码
+            captcha_ok = await self.slider_handler.handle_verification(
+                page=self.browser.page,
+                context=self.browser.context,
+                max_retries=3,
+                allow_manual=not bool(self.config.headless),
+            )
+            if not captcha_ok:
+                return {"items": [], "total": 0, "error": "滑块验证失败"}
+
+            # 逐页采集
+            all_items = []
+            seen_ids = set()
+
+            for page_num in range(max_pages):
+                page_items = await self._extract_items_from_page()
+                for item in page_items:
+                    item_id = str(item.get("item_id") or "")
+                    if not item_id or item_id in seen_ids:
+                        continue
+                    seen_ids.add(item_id)
+
+                    want = item.get("want_count") or 0
+                    view = item.get("view_count") or 0
+
+                    if min_want_count > 0 and want < min_want_count:
+                        continue
+                    if min_view_count > 0 and view < min_view_count:
+                        continue
+
+                    item["item_url"] = self._canonical_item_url(item_id)
+                    all_items.append(item)
+
+                if page_num < max_pages - 1:
+                    has_more = await self._scroll_next_page()
+                    if not has_more:
+                        break
+
+            return {"items": all_items, "total": len(all_items)}
+
+        except Exception as e:
+            logger.error(f"按卖家采集失败: {e}")
+            return {"items": [], "total": 0, "error": str(e)}
+
     async def search(
         self,
         *,

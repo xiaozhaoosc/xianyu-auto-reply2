@@ -48,7 +48,7 @@ RUN apt-get update && \
         libasound2 \
         libatspi2.0-0 \
         libgtk-3-0 \
-        libgdk-pixbuf2.0-0 \
+        libgdk-pixbuf-2.0-0 \
         libxcursor1 \
         libxi6 \
         libxrender1 \
@@ -87,7 +87,7 @@ RUN playwright install chromium && \
 
 # 创建必要的目录并设置权限
 RUN mkdir -p /app/logs /app/data /app/backups /app/static/uploads/images && \
-    chmod 777 /app/logs /app/data /app/backups /app/static/uploads /app/static/uploads/images
+    chmod 755 /app/logs /app/data /app/backups /app/static/uploads /app/static/uploads/images
 
 # 注意: 为了简化权限问题，使用root用户运行
 # 在生产环境中，建议配置适当的用户映射
