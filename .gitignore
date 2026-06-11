@@ -304,3 +304,8 @@ AGENTS.md
 deploy/systemd/xianyu.env
 deploy/systemd/feishu_webhook.txt
 logs/
+
+# ------------------------------------------
+# IDE 项目文件（通配）
+# ------------------------------------------
+*.iml

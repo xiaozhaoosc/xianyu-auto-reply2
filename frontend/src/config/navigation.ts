@@ -90,6 +90,8 @@ export const mainNavItems: NavEntry[] = [
   { key: 'accounts', icon: Users, label: '账号管理', path: '/accounts' },
   { key: 'online-chat-new', icon: MessageSquare, label: '在线聊天', path: '/online-chat-new' },
   { key: 'items', icon: Package, label: '商品管理', path: '/items' },
+  { key: 'item-search', icon: PackageSearch, label: '商品搜索/采集', path: '/item-search' },
+  { key: 'goofish-crawler', icon: Timer, label: '定时采集', path: '/goofish-scheduled-crawler' },
   { key: 'cards', icon: Ticket, label: '卡券管理', path: '/cards' },
   { key: 'migration', icon: ArrowLeftRight, label: '商品迁移', path: '/migration' },
   { key: 'account-sync', icon: Users, label: '账号同步', path: '/account-sync' },

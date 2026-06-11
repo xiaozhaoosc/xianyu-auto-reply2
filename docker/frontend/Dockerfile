@@ -6,8 +6,7 @@
 # 基础镜像走 docker.io 官方名（由 buildx 的 buildkitd 镜像加速配置拉取，见流水线 BUILDKIT 配置）
 FROM node:18-alpine AS builder
 
-# 配置国内镜像源
-RUN npm config set registry https://registry.npmmirror.com
+RUN npm config set registry https://registry.npmjs.org
 
 WORKDIR /app
 
@@ -27,8 +26,7 @@ RUN npm run build
 # 基础镜像走 docker.io 官方名（由 buildx 的 buildkitd 镜像加速配置拉取，见流水线 BUILDKIT 配置）
 FROM nginx:alpine
 
-# 配置国内镜像源
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
+# Alpine uses default repos
 
 # 复制nginx配置
 COPY docker/frontend/nginx.conf /etc/nginx/conf.d/default.conf
