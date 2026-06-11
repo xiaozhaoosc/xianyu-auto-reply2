@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-RUN pip config set global.index-url https://pypi.org/simple
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 
 WORKDIR /app
 
