@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+
 import { ExternalLink, Play, RefreshCw, Square, Trash2, Eye, Clock } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { getAccountDetails } from '@/api/accounts'
@@ -49,7 +49,6 @@ function StatPill({ label, value }: { label: string; value: string }) {
 }
 
 export function GoofishScheduledCrawler() {
-  const navigate = useNavigate()
   const { addToast } = useUIStore()
 
   const [loadingPage, setLoadingPage] = useState(true)

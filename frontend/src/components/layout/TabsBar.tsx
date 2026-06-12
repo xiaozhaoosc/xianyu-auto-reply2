@@ -38,6 +38,7 @@ const routeTitles: Record<string, string> = {
   '/notification-channels': '通知渠道',
   '/message-notifications': '消息通知',
   '/item-search': '商品搜索',
+  '/h5-item-search': 'H5商品搜索',
   '/goofish-compass': '数据罗盘',
   '/goofish-scheduled-crawler': '定时采集',
   '/settings': '系统设置',

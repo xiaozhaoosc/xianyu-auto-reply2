@@ -38,6 +38,7 @@ const AdManage = React.lazy(() => import('@/pages/advertisements/AdManage'))
 const AdApply = React.lazy(() => import('@/pages/advertisements/AdApply'))
 const Tutorial = React.lazy(() => import('@/pages/tutorial/Tutorial').then(m => ({ default: m.Tutorial })))
 const ItemSearch = React.lazy(() => import('@/pages/search/ItemSearch').then(m => ({ default: m.ItemSearch })))
+const H5ItemSearch = React.lazy(() => import('@/pages/search/H5ItemSearch').then(m => ({ default: m.H5ItemSearch })))
 const GoofishCompass = React.lazy(() => import('@/pages/compass/GoofishCompass').then(m => ({ default: m.GoofishCompass })))
 const GoofishScheduledCrawler = React.lazy(() => import('@/pages/crawler/GoofishScheduledCrawler').then(m => ({ default: m.GoofishScheduledCrawler })))
 const Cards = React.lazy(() => import('@/pages/cards/Cards').then(m => ({ default: m.Cards })))
@@ -338,6 +339,7 @@ function App() {
             <Route path="feedback" element={<Feedback />} />
             <Route path="ad-apply" element={<AdApply />} />
             <Route path="item-search" element={<ItemSearch />} />
+            <Route path="h5-item-search" element={<H5ItemSearch />} />
             <Route path="goofish-compass" element={<GoofishCompass />} />
             <Route path="goofish-scheduled-crawler" element={<GoofishScheduledCrawler />} />
             <Route path="cards" element={<Cards />} />

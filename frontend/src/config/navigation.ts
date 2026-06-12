@@ -87,6 +87,7 @@ export const mainNavItems: NavEntry[] = [
   { key: 'online-chat-new', icon: MessageSquare, label: '在线聊天', path: '/online-chat-new' },
   { key: 'items', icon: Package, label: '商品管理', path: '/items' },
   { key: 'item-search', icon: PackageSearch, label: '商品搜索/采集', path: '/item-search' },
+  { key: 'h5-item-search', icon: PackageSearch, label: 'H5商品搜索/采集', path: '/h5-item-search' },
   { key: 'goofish-crawler', icon: Timer, label: '定时采集', path: '/goofish-scheduled-crawler' },
   { key: 'cards', icon: Ticket, label: '卡券管理', path: '/cards' },
   { key: 'orders', icon: ShoppingCart, label: '订单管理', path: '/orders' },
