@@ -1,0 +1,22 @@
+server:
+  port: ${BACKEND_WEB_PORT:8089}
+
+spring:
+  application:
+    name: platform-server
+  profiles:
+    include: common
+
+sa-token:
+  token-name: Authorization
+  timeout: 2592000
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn

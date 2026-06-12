@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package xyun.platform;
+
+option java_package = "com.xyun.platform.grpc";
+option java_multiple_files = true;
+
+// 账号服务
+service AccountService {
+  rpc GetAccount (AccountRequest) returns (AccountResponse);
+  rpc UpdateStatus (StatusRequest) returns (StatusResponse);
+  rpc WriteLoginLog (LoginLogRequest) returns (Empty);
+}
+
+message AccountRequest {
+  string account_id = 1;
+  int64 owner_id = 2;
+}
+
+message AccountResponse {
+  int64 id = 1;
+  string account_id = 2;
+  string nickname = 3;
+  string status = 4;
+  string cookies = 5;
+}
+
+message StatusRequest {
+  string account_id = 1;
+  string status = 2;
+}
+
+message StatusResponse {
+  bool success = 1;
+}
+
+message LoginLogRequest {
+  string account_id = 1;
+  string login_type = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+message Empty {}

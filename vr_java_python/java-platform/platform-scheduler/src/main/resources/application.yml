@@ -1,0 +1,18 @@
+server:
+  port: ${SCHEDULER_PORT:8091}
+
+spring:
+  application:
+    name: platform-scheduler
+  profiles:
+    include: common
+
+# JobRunr 配置 — 使用 MySQL 作为存储后端
+org:
+  jobrunr:
+    background-job-server:
+      enabled: true
+      worker-count: 4
+    dashboard:
+      enabled: true
+      port: 8000

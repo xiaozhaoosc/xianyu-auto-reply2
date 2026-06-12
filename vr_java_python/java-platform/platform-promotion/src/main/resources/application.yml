@@ -1,0 +1,8 @@
+server:
+  port: ${PROMOTION_PORT:8092}
+
+spring:
+  application:
+    name: platform-promotion
+  profiles:
+    include: common

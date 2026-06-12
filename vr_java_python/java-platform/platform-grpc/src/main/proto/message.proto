@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package xyun.platform;
+
+option java_package = "com.xyun.platform.grpc";
+option java_multiple_files = true;
+
+import "account.proto";
+
+// 消息服务
+service MessageService {
+  rpc WriteReplyLog (ReplyLogRequest) returns (Empty);
+  rpc WriteAIChatMessage (AIChatRequest) returns (Empty);
+  rpc CheckBlacklist (BlacklistRequest) returns (BlacklistResponse);
+}
+
+message ReplyLogRequest {
+  string account_id = 1;
+  string buyer_id = 2;
+  string buyer_message = 3;
+  string reply_content = 4;
+  string reply_type = 5;
+  string item_id = 6;
+  int64 timestamp = 7;
+}
+
+message AIChatRequest {
+  string account_id = 1;
+  string buyer_id = 2;
+  string role = 3;
+  string content = 4;
+  string model = 5;
+  int64 timestamp = 6;
+}
+
+message BlacklistRequest {
+  string account_id = 1;
+  string buyer_id = 2;
+}
+
+message BlacklistResponse {
+  bool is_blacklisted = 1;
+  string reason = 2;
+}

@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package xyun.platform;
+
+option java_package = "com.xyun.platform.grpc";
+option java_multiple_files = true;
+
+import "account.proto";
+
+// 发货服务
+service DeliveryService {
+  rpc MatchCard (MatchCardRequest) returns (MatchCardResponse);
+  rpc WriteDeliveryLog (DeliveryLogRequest) returns (Empty);
+  rpc GetOrderInfo (OrderRequest) returns (OrderResponse);
+}
+
+message MatchCardRequest {
+  string account_id = 1;
+  string item_id = 2;
+  int32 quantity = 3;
+}
+
+message MatchCardResponse {
+  bool matched = 1;
+  int64 card_id = 2;
+  string card_content = 3;
+  string card_type = 4;
+  string card_source = 5;
+}
+
+message DeliveryLogRequest {
+  string account_id = 1;
+  string order_id = 2;
+  string item_id = 3;
+  string buyer_id = 4;
+  bool success = 5;
+  string content = 6;
+  string fail_reason = 7;
+  int64 timestamp = 8;
+}
+
+message OrderRequest {
+  string order_id = 1;
+}
+
+message OrderResponse {
+  string order_id = 1;
+  string item_id = 2;
+  string buyer_id = 3;
+  string status = 4;
+  double amount = 5;
+  int64 created_at = 6;
+}

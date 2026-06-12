@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package xyun.platform;
+
+option java_package = "com.xyun.platform.grpc";
+option java_multiple_files = true;
+
+import "account.proto";
+
+// 规则服务
+service RuleService {
+  rpc GetKeywordRules (RuleRequest) returns (KeywordRuleListResponse);
+  rpc GetDeliveryRules (RuleRequest) returns (DeliveryRuleListResponse);
+  rpc GetAISettings (AISettingRequest) returns (AISettingResponse);
+  rpc GetDefaultReply (DefaultReplyRequest) returns (DefaultReplyResponse);
+}
+
+message RuleRequest {
+  string account_id = 1;
+}
+
+message KeywordRule {
+  int64 id = 1;
+  string account_id = 2;
+  string keyword = 3;
+  int32 match_type = 4;
+  string reply_content = 5;
+  int32 priority = 6;
+  bool enabled = 7;
+}
+
+message KeywordRuleListResponse {
+  repeated KeywordRule rules = 1;
+}
+
+message DeliveryRule {
+  int64 id = 1;
+  string account_id = 2;
+  string rule_code = 3;
+  bool enabled = 4;
+  int32 priority = 5;
+  string block_reason = 6;
+  bool auto_close_order = 7;
+  string config = 8;
+}
+
+message DeliveryRuleListResponse {
+  repeated DeliveryRule rules = 1;
+}
+
+message AISettingRequest {
+  string account_id = 1;
+}
+
+message AISettingResponse {
+  bool enabled = 1;
+  string provider = 2;
+  string model = 3;
+  string api_key = 4;
+  string base_url = 5;
+  string system_prompt = 6;
+}
+
+message DefaultReplyRequest {
+  string account_id = 1;
+  string item_id = 2;
+}
+
+message DefaultReplyResponse {
+  string content = 1;
+  bool reply_once = 2;
+}

@@ -1,0 +1,91 @@
+version: "3.8"
+
+services:
+  # MySQL 8.0
+  mysql:
+    image: mysql:8.0
+    container_name: xianyu-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-xianyu_data}
+      MYSQL_USER: ${MYSQL_USER:-xianyu}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-xianyu123}
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis 7
+  redis:
+    image: redis:7-alpine
+    container_name: xianyu-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Java 平台服务
+  platform-server:
+    build:
+      context: ./java-platform
+      dockerfile: ../deployment/docker/Dockerfile.java
+    container_name: xianyu-platform-server
+    restart: unless-stopped
+    ports:
+      - "8089:8089"
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-xianyu}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-xianyu123}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TZ=Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # JobRunr 调度服务
+  platform-scheduler:
+    build:
+      context: ./java-platform
+      dockerfile: ../deployment/docker/Dockerfile.java
+    container_name: xianyu-platform-scheduler
+    restart: unless-stopped
+    ports:
+      - "8091:8091"
+      - "8000:8000"  # JobRunr Dashboard
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-xianyu}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-xianyu123}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TZ=Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+  redis_data:
