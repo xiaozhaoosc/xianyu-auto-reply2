@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Play, RefreshCw, Square, Trash2, Eye, Clock } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { getAccountDetails } from '@/api/accounts'
+import { collectToMaterial } from '@/api/search'
 import {
   createGoofishCrawlJob,
   deleteGoofishCrawlJob,
@@ -47,6 +49,7 @@ function StatPill({ label, value }: { label: string; value: string }) {
 }
 
 export function GoofishScheduledCrawler() {
+  const navigate = useNavigate()
   const { addToast } = useUIStore()
 
   const [loadingPage, setLoadingPage] = useState(true)
@@ -97,6 +100,68 @@ export function GoofishScheduledCrawler() {
   const [sellerMaxPages, setSellerMaxPages] = useState(5)
   const [sellerResults, setSellerResults] = useState<GoofishCrawlItem[]>([])
   const [sellerLoading, setSellerLoading] = useState(false)
+
+  // 1. 采集并转草稿（跳转至素材编辑管理）
+  const handleToDraftSingle = async (e: React.MouseEvent, item: GoofishCrawlItem) => {
+    e.preventDefault()
+    e.stopPropagation()
+    addToast({ type: 'info', message: '正在保存并生成草稿...' })
+    try {
+      const parsedPrice = typeof item.price === 'string'
+        ? parseFloat(item.price.replace(/[^\d.]/g, '')) || 0.0
+        : Number(item.price || 0.0)
+      const result = await collectToMaterial({
+        item_id: item.item_id,
+        title: item.title || '',
+        description: item.description || item.title || '',
+        price: parsedPrice,
+        images: item.main_image ? [item.main_image] : [],
+        address: item.area || '',
+        condition: '全新'
+      })
+      if (result.success) {
+        addToast({ type: 'success', message: '草稿已就绪！即将前往素材页面进行编辑...' })
+        setTimeout(() => {
+          navigate('/product-publish/materials')
+        }, 1000)
+      } else {
+        addToast({ type: 'warning', message: result.message || '转草稿失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '接口调用异常，请重试' })
+    }
+  }
+
+  // 2. 采集并跳转发布（跳转至批量发布配置）
+  const handlePublishSingle = async (e: React.MouseEvent, item: GoofishCrawlItem) => {
+    e.preventDefault()
+    e.stopPropagation()
+    addToast({ type: 'info', message: '正在提取商品资源...' })
+    try {
+      const parsedPrice = typeof item.price === 'string'
+        ? parseFloat(item.price.replace(/[^\d.]/g, '')) || 0.0
+        : Number(item.price || 0.0)
+      const result = await collectToMaterial({
+        item_id: item.item_id,
+        title: item.title || '',
+        description: item.description || item.title || '',
+        price: parsedPrice,
+        images: item.main_image ? [item.main_image] : [],
+        address: item.area || '',
+        condition: '全新'
+      })
+      if (result.success) {
+        addToast({ type: 'success', message: '商品已加入发布序列！即将前往发布页...' })
+        setTimeout(() => {
+          navigate('/product-publish/batch')
+        }, 1000)
+      } else {
+        addToast({ type: 'warning', message: result.message || '发布配置准备失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '接口调用异常，请重试' })
+    }
+  }
 
   const loadAccountsAndJobs = async () => {
     try {
@@ -513,11 +578,25 @@ export function GoofishScheduledCrawler() {
                         </div>
                       )}
                     </div>
-                    {it.item_url && (
-                      <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={(e) => handleToDraftSingle(e, it)}
+                        className="text-xs py-1 px-2.5 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded transition-colors font-medium"
+                      >
+                        转草稿
+                      </button>
+                      <button
+                        onClick={(e) => handlePublishSingle(e, it)}
+                        className="text-xs py-1 px-2.5 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 rounded transition-colors font-medium"
+                      >
+                        发布
+                      </button>
+                      {it.item_url && (
+                        <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -610,11 +689,25 @@ export function GoofishScheduledCrawler() {
                         </div>
                       )}
                     </div>
-                    {it.item_url && (
-                      <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={(e) => handleToDraftSingle(e, it)}
+                        className="text-xs py-1 px-2.5 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded transition-colors font-medium"
+                      >
+                        转草稿
+                      </button>
+                      <button
+                        onClick={(e) => handlePublishSingle(e, it)}
+                        className="text-xs py-1 px-2.5 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 rounded transition-colors font-medium"
+                      >
+                        发布
+                      </button>
+                      {it.item_url && (
+                        <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -833,11 +926,25 @@ export function GoofishScheduledCrawler() {
                               {formatDateTime(it.fetched_at)}
                             </div>
                           </div>
-                          {it.item_url && (
-                            <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
-                              <ExternalLink className="w-4 h-4" />
-                            </a>
-                          )}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={(e) => handleToDraftSingle(e, it)}
+                              className="text-xs py-1 px-2.5 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded transition-colors font-medium"
+                            >
+                              转草稿
+                            </button>
+                            <button
+                              onClick={(e) => handlePublishSingle(e, it)}
+                              className="text-xs py-1 px-2.5 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 rounded transition-colors font-medium"
+                            >
+                              发布
+                            </button>
+                            {it.item_url && (
+                              <a className="btn-ios-secondary !px-2 !py-1.5" href={it.item_url} target="_blank" rel="noreferrer">
+                                <ExternalLink className="w-4 h-4" />
+                              </a>
+                            )}
+                          </div>
                         </div>
                         {it.detail_error && (
                           <div className="text-xs text-amber-600 dark:text-amber-300 mt-2">
