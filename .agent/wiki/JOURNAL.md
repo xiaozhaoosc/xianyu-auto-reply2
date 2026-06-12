@@ -79,3 +79,24 @@
 - **混合轨迹机制**: 引入三次贝塞尔加速度与超调机制，使得鼠标在移动时不再是机械的匀变速，且会自动模拟“划过头再缓慢拉回”的真实人类操作。
 - **肌肉释放模拟**: 摒弃了 Playwright 默认的 steps 插值机制，精确掌控每一帧的延时，并引入手指释放鼠标前的极微细高频抖动，行为真实度大幅提升。
 
+---
+
+## 📅 2026-06-12 (四次迭代) — 定时采集单品控制集成与快捷流转
+
+### [Morning_Briefing]
+- **昨日未竟**: 定时采集结果列表页面增加「转草稿」（温暖橙）和「发布」（森林绿）操作按钮，并对接 `/api/v1/items/collect-to-material` 接口，在成功后分别跳转至 `/product-publish/materials` 和 `/product-publish/batch`。
+- **隐患预警**: 采集入库及自动化流程依赖于后端 `/api/v1/items/collect-to-material` 的稳定性。若后端采集处理或网络出现抖动可能导致导入失败，需要监测 API 错误响应。
+- **今日建议**:
+  1. 保证前端 `GoofishScheduledCrawler.tsx` 和后端接口的顺利交互，增加防抖和加载状态以防重复导入。
+
+### [Daily_Summary]
+
+| 模块/文件 | 变更类型 | 变更描述 |
+| :--- | :--- | :--- |
+| [GoofishScheduledCrawler.tsx](file:///D:/IdeaProjects/xianyu-auto-reply2/frontend/src/pages/crawler/GoofishScheduledCrawler.tsx) | 修改 | 引入 `collectToMaterial` API 及 React-Router 的 `useNavigate`；在“定时采集结果列表”、“按 ID 采集列表”、“按卖家采集列表”这三大渲染块中，将单一的外链图标扩展重构为包含「转草稿」（温暖橙）、「发布」（森林绿）以及外链的扁平化按钮操作组。点击转草稿后入库并跳转至 `/product-publish/materials`，点击发布后入库并跳转至 `/product-publish/batch`。 |
+
+### [Project_Reflection]
+
+| 任务模块 | 交付成果 | 验证状态 | 备注 |
+| :--- | :--- | :--- | :--- |
+| **单品控制流转** | 在 Goofish Scheduled Crawler 结果页面提供了温暖橙的「转草稿」和森林绿的「发布」功能 | ✅ 编译无误 & 代码入库推送 | 已经成功在本地进行 `npx tsc` 校验，无任何相关编译错误，并 push 至远程 `dev_agy_0612` |
