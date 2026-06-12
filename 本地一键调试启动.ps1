@@ -50,6 +50,20 @@ if (-not (Test-Path $venvPath)) {
     exit 1
 }
 
+# 2.4 检查前端依赖项是否已安装
+$frontendModules = Join-Path (Get-Location) "frontend\node_modules"
+if (-not (Test-Path $frontendModules)) {
+    Write-Warn "未检测到主系统前端依赖 node_modules，正在尝试自动安装 (npm install)..."
+    Start-Process cmd -ArgumentList "/c", "cd frontend && npm install --silent" -Wait
+    Write-Success "主系统前端依赖安装完成！"
+}
+$promoModules = Join-Path (Get-Location) "promotion\frontend\node_modules"
+if (-not (Test-Path $promoModules)) {
+    Write-Warn "未检测到返佣系统前端依赖 node_modules，正在尝试自动安装 (npm install)..."
+    Start-Process cmd -ArgumentList "/c", "cd promotion\frontend && npm install --silent" -Wait
+    Write-Success "返佣系统前端依赖安装完成！"
+}
+
 # 2.5 同步根目录 .env 配置到各子服务中
 Write-Info "正在同步环境变量配置文件 .env 到各后端子项目中..."
 $envFile = Join-Path (Get-Location) ".env"
