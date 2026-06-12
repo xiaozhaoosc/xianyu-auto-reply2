@@ -27,9 +27,9 @@ if exist ".env" (
     echo [!] Warning: .env file not found!
 )
 
-:: 3. Automatically clean up processes occupying debug ports and close their hosting terminal windows
+:: 3. Automatically clean up processes occupying debug ports and close their hosting terminal windows (Robusted)
 echo [*] Cleaning up old debug processes and closing old terminal windows...
-powershell -Command "foreach($port in @(8089, 8090, 8091, 8092, 9000, 9001)){$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue; if($conn){foreach($c in $conn){$pid = $c.OwningProcess; $proc = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $pid) -ErrorAction SilentlyContinue; if($proc -and $proc.ParentProcessId){$parent = Get-Process -Id $proc.ParentProcessId -ErrorAction SilentlyContinue; if($parent -and @('cmd','powershell','pwsh') -contains $parent.ProcessName){Stop-Process -Id $proc.ParentProcessId -Force -ErrorAction SilentlyContinue}}; Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue}}}"
+powershell -Command "foreach($port in @(8089, 8090, 8091, 8092, 9000, 9001)){try{$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue; if($conn){foreach($c in $conn){$pid = $c.OwningProcess; if($pid){try{$proc = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $pid) -ErrorAction SilentlyContinue; if($proc -and $proc.ParentProcessId){$parent = Get-Process -Id $proc.ParentProcessId -ErrorAction SilentlyContinue; if($parent -and @('cmd','powershell','pwsh') -contains $parent.ProcessName){Stop-Process -Id $proc.ParentProcessId -Force -ErrorAction SilentlyContinue}}}catch{}; try{Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue}catch{}}}}}catch{}}"
 echo [+] Ports and old terminal windows cleanup completed!
 
 :: 4. Launch 6 services concurrently in separate windows for interactive debugging
