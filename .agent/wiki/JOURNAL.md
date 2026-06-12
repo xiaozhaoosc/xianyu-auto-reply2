@@ -149,3 +149,29 @@
 | :--- | :--- | :--- | :--- |
 | **依赖自检** | Windows PowerShell 启动脚本具备依赖缺失自动修补能力 | ✅ 验证无误 | 本地运行正常通过。 |
 | **Linux 支持** | 新增并发布了支持 Ubuntu 桌面的 `.sh` 调试启动器 | ✅ 已在 Git 标记 755 | 支持精准关闭旧 bash 终端，极大方便 Linux 开发者调试。 |
+
+---
+
+## 📅 2026-06-12 (七次迭代) — Docker 构建缓存与编排网络优化
+
+### [Morning_Briefing]
+- **昨日未竟**: 优化 Dockerfile 的依赖复制与缓存层结构，降低重复构建时的开销；重构开发底座 Docker Compose 配置，注入动态环境参数并实现网络互通。
+- **隐患预警**: `docker-compose.dev-db.yml` 和主 `docker-compose.yml` 在网络上如果不同步，将导致容器内出现 `Host unreachable` 或 `dev-mysql not found` 等通信故障。
+- **今日建议**:
+  1. 通过在 `docker-compose.dev-db.yml` 中显式定义并连接相同的 `docker-compose_dev_network` 网络来保障容器互通。
+
+### [Daily_Summary]
+
+| 模块/文件 | 变更类型 | 变更描述 |
+| :--- | :--- | :--- |
+| [backend-web/Dockerfile](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/Dockerfile) | 修改 | 重构指令顺序，优先复制 `pyproject.toml` 并提取安装 Python 依赖项以最大化利用 Docker 的 Layer 构建缓存，业务代码修改时可秒级完成构建。 |
+| [websocket/Dockerfile](file:///D:/IdeaProjects/xianyu-auto-reply2/websocket/Dockerfile) | 修改 | 同样优先复制 `pyproject.toml` 并执行依赖安装，极大加快开发测试编译效率。 |
+| [scheduler/Dockerfile](file:///D:/IdeaProjects/xianyu-auto-reply2/scheduler/Dockerfile) | 修改 | 对齐缓存优化策略，优先提取安装第三方依赖，随后合并项目源码。 |
+| [docker-compose.dev-db.yml](file:///D:/IdeaProjects/xianyu-auto-reply2/docker-compose.dev-db.yml) | 修改 | 去除敏感密码的本地硬编码，全部改用环境变量引用（提供安全 fallback 默认值）；将端口、数据库名 and 账号暴露给外部配置；增加 `dev-network` 网络配置实现与主服务虚拟网络互通。 |
+
+### [Project_Reflection]
+
+| 任务模块 | 交付成果 | 验证状态 | 备注 |
+| :--- | :--- | :--- | :--- |
+| **构建速度优化** | 3大 Python 后端容器 Dockerfile 编译速度提升数倍 | ✅ 成功应用 | 改动代码时无需重新下载第三方依赖包。 |
+| **安全与互通** | 优化开发数据库编排配置，去除密码硬编码并保证容器联通 | ✅ 架构对齐 | 生产部署和本地开发更为敏捷。 |
