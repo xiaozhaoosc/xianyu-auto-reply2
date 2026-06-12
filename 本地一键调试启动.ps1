@@ -67,20 +67,34 @@ if (Test-Path $envFile) {
 Write-Info "正在清理可能占用调试端口的旧服务进程及关闭旧终端窗口..."
 $ports = @(8089, 8090, 8091, 8092, 9000, 9001)
 foreach ($port in $ports) {
-    $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
-    if ($conn) {
-        foreach ($c in $conn) {
-            $pid = $c.OwningProcess
-            # 获取父进程（如启动它的 cmd.exe 或者是 powershell.exe）并关闭对应窗口
-            $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $pid" -ErrorAction SilentlyContinue
-            if ($proc -and $proc.ParentProcessId) {
-                $parent = Get-Process -Id $proc.ParentProcessId -ErrorAction SilentlyContinue
-                if ($parent -and ($parent.ProcessName -eq 'cmd' -or $parent.ProcessName -eq 'powershell' -or $parent.ProcessName -eq 'pwsh')) {
-                    Stop-Process -Id $proc.ParentProcessId -Force -ErrorAction SilentlyContinue
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+        if ($conn) {
+            foreach ($c in $conn) {
+                $pid = $c.OwningProcess
+                if ($pid) {
+                    try {
+                        # 获取父进程（如启动它的 cmd.exe 或者是 powershell.exe）并关闭对应窗口
+                        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $pid" -ErrorAction SilentlyContinue
+                        if ($proc -and $proc.ParentProcessId) {
+                            $parent = Get-Process -Id $proc.ParentProcessId -ErrorAction SilentlyContinue
+                            if ($parent -and ($parent.ProcessName -eq 'cmd' -or $parent.ProcessName -eq 'powershell' -or $parent.ProcessName -eq 'pwsh')) {
+                                Stop-Process -Id $proc.ParentProcessId -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    } catch {
+                        # 忽略父进程查杀异常
+                    }
+                    try {
+                        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                    } catch {
+                        # 忽略子进程查杀异常
+                    }
                 }
             }
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
         }
+    } catch {
+        # 忽略连接查询异常
     }
 }
 Write-Success "端口及旧终端窗口自动回收完成！"
