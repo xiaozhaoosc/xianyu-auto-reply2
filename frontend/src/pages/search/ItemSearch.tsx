@@ -1,11 +1,13 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Search, ShoppingBag, ExternalLink, MapPin, Heart } from 'lucide-react'
-import { searchItems, SearchResultItem } from '@/api/search'
+import { searchItems, collectToMaterial, SearchResultItem } from '@/api/search'
 import { useUIStore } from '@/store/uiStore'
 import { ButtonLoading } from '@/components/common/Loading'
 
 export function ItemSearch() {
+  const navigate = useNavigate()
   const { addToast } = useUIStore()
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
@@ -44,6 +46,90 @@ export function ItemSearch() {
       addToast({ type: 'error', message: '搜索失败，请稍后重试' })
     } finally {
       setLoading(false)
+    }
+  }
+
+  // 1. 采集到素材库
+  const handleCollect = async (e: React.MouseEvent, item: SearchResultItem) => {
+    e.preventDefault()
+    e.stopPropagation()
+    addToast({ type: 'info', message: '正在保存到素材库...' })
+    try {
+      const parsedPrice = parseFloat(item.price.replace(/[^\d.]/g, '')) || 0.0
+      const result = await collectToMaterial({
+        item_id: item.item_id,
+        title: item.title,
+        description: item.title,
+        price: parsedPrice,
+        images: item.main_image ? [item.main_image] : [],
+        address: item.area || '',
+        condition: '全新'
+      })
+      if (result.success) {
+        addToast({ type: 'success', message: '采集成功！已成功存入本地素材库' })
+      } else {
+        addToast({ type: 'warning', message: result.message || '采集失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '接口调用异常，请重试' })
+    }
+  }
+
+  // 2. 采集并转草稿（跳转至素材编辑管理）
+  const handleToDraft = async (e: React.MouseEvent, item: SearchResultItem) => {
+    e.preventDefault()
+    e.stopPropagation()
+    addToast({ type: 'info', message: '正在保存并生成草稿...' })
+    try {
+      const parsedPrice = parseFloat(item.price.replace(/[^\d.]/g, '')) || 0.0
+      const result = await collectToMaterial({
+        item_id: item.item_id,
+        title: item.title,
+        description: item.title,
+        price: parsedPrice,
+        images: item.main_image ? [item.main_image] : [],
+        address: item.area || '',
+        condition: '全新'
+      })
+      if (result.success) {
+        addToast({ type: 'success', message: '草稿已就绪！即将前往素材页面进行编辑...' })
+        setTimeout(() => {
+          navigate('/product-publish/materials')
+        }, 1000)
+      } else {
+        addToast({ type: 'warning', message: result.message || '转草稿失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '接口调用异常，请重试' })
+    }
+  }
+
+  // 3. 采集并跳转发布（跳转至批量发布配置）
+  const handlePublish = async (e: React.MouseEvent, item: SearchResultItem) => {
+    e.preventDefault()
+    e.stopPropagation()
+    addToast({ type: 'info', message: '正在提取商品资源...' })
+    try {
+      const parsedPrice = parseFloat(item.price.replace(/[^\d.]/g, '')) || 0.0
+      const result = await collectToMaterial({
+        item_id: item.item_id,
+        title: item.title,
+        description: item.title,
+        price: parsedPrice,
+        images: item.main_image ? [item.main_image] : [],
+        address: item.area || '',
+        condition: '全新'
+      })
+      if (result.success) {
+        addToast({ type: 'success', message: '商品已加入发布序列！即将前往发布页...' })
+        setTimeout(() => {
+          navigate('/product-publish/batch')
+        }, 1000)
+      } else {
+        addToast({ type: 'warning', message: result.message || '发布配置准备失败' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '接口调用异常，请重试' })
     }
   }
 
@@ -98,15 +184,13 @@ export function ItemSearch() {
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
         >
           {results.map((item, index) => (
-            <motion.a
+            <motion.div
               key={item.item_id || index}
-              href={item.item_url || `https://www.goofish.com/item?id=${item.item_id}`}
-              target="_blank"
-              rel="noopener noreferrer"
+              onClick={() => window.open(item.item_url || `https://www.goofish.com/item?id=${item.item_id}`, '_blank')}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.03 }}
-              className="vben-card group hover:shadow-lg transition-all duration-300 overflow-hidden"
+              className="vben-card group hover:shadow-lg transition-all duration-300 overflow-hidden cursor-pointer"
             >
               {/* 商品图片 */}
               <div className="aspect-square bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
@@ -165,8 +249,30 @@ export function ItemSearch() {
                     ))}
                   </div>
                 )}
+                
+                {/* 操作按钮组：采集、转草稿、发布 */}
+                <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    onClick={(e) => handleCollect(e, item)}
+                    className="flex-1 text-xs py-1.5 px-2 bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 rounded-md transition-colors font-medium text-center"
+                  >
+                    采集
+                  </button>
+                  <button
+                    onClick={(e) => handleToDraft(e, item)}
+                    className="flex-1 text-xs py-1.5 px-2 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded-md transition-colors font-medium text-center"
+                  >
+                    转草稿
+                  </button>
+                  <button
+                    onClick={(e) => handlePublish(e, item)}
+                    className="flex-1 text-xs py-1.5 px-2 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 rounded-md transition-colors font-medium text-center"
+                  >
+                    发布
+                  </button>
+                </div>
               </div>
-            </motion.a>
+            </motion.div>
           ))}
         </motion.div>
       )}
