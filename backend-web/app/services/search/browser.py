@@ -1,4 +1,4 @@
-﻿"""
+"""
 浏览器管理器
 
 管理Playwright浏览器的初始化和关闭
@@ -72,7 +72,7 @@ class BrowserManager:
         """检查Playwright是否可用"""
         return PLAYWRIGHT_AVAILABLE
 
-    async def init_browser(self, headless: bool = True) -> bool:
+    async def init_browser(self, headless: Optional[bool] = None) -> bool:
         """初始化浏览器（使用持久化上下文）"""
         if not PLAYWRIGHT_AVAILABLE:
             raise Exception("Playwright 未安装，无法使用真实搜索功能")
@@ -80,9 +80,14 @@ class BrowserManager:
         if self.browser:
             return True
 
-        # Docker环境下强制无头模式（容器内无显示器，有头模式会报错）
-        if not headless and os.environ.get("BROWSER_HEADLESS", "").lower() == "true":
-            logger.info("检测到BROWSER_HEADLESS=true，强制使用无头模式")
+        # 动态读取环境变量，默认为 True
+        env_headless = os.environ.get("BROWSER_HEADLESS", "true").lower() == "true"
+        if headless is None:
+            headless = env_headless
+
+        # Docker环境或显式设置强制无头模式（容器内无显示器，有头模式会报错）
+        if os.environ.get("DOCKER_ENV") == "true" or os.environ.get("BROWSER_HEADLESS_FORCE", "").lower() == "true":
+            logger.info("强制使用无头模式")
             headless = True
 
         try:

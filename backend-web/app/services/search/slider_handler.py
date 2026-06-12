@@ -1,4 +1,4 @@
-﻿"""
+"""
 滑块验证处理器
 
 处理闲鱼搜索时的滑块验证（刮刮乐类型）
@@ -421,11 +421,12 @@ class SliderHandler:
             else:
                 # 普通滑块使用PlaywrightSliderService处理
                 try:
-                    from app.services.captcha import PlaywrightSliderService
+                    from common.services.captcha.slider_stealth import PlaywrightSliderService
+                    env_headless = os.environ.get("BROWSER_HEADLESS", "true").lower() == "true"
                     slider_service = PlaywrightSliderService(
                         user_id=self.user_id,
                         enable_learning=True,
-                        headless=True
+                        headless=env_headless
                     )
                     slider_service.page = page
                     slider_service.context = context
