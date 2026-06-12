@@ -13,17 +13,18 @@ RUN apt-get update && apt-get install -y curl ca-certificates gcc \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制项目源码
-COPY common /app/common
-COPY scheduler /app/scheduler
-COPY launcher /app/launcher
-
-# 从pyproject.toml提取并安装依赖
+# 仅复制 pyproject.toml 优先安装依赖，利用 Docker 构建缓存
+COPY scheduler/pyproject.toml /app/scheduler/
 RUN python -c "\
 import tomllib; \
 deps = tomllib.load(open('/app/scheduler/pyproject.toml','rb')).get('project',{}).get('dependencies',[]); \
 open('/tmp/requirements.txt','w').write('\n'.join(deps))" && \
     pip install --no-cache-dir -r /tmp/requirements.txt
+
+# 复制项目源码
+COPY common /app/common
+COPY scheduler /app/scheduler
+COPY launcher /app/launcher
 
 # 安装Playwright浏览器
 RUN python -m playwright install --with-deps chromium
