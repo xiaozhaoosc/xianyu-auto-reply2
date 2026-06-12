@@ -36,3 +36,26 @@ export const searchItems = async (
     error: result.error
   }
 }
+
+// 采集到素材的参数荷载
+export interface CollectToMaterialPayload {
+  item_id: string
+  title: string
+  description?: string
+  price: number
+  original_price?: number
+  images?: string[]
+  address?: string
+  condition?: string
+}
+
+// 采集商品到素材库
+export const collectToMaterial = async (
+  payload: CollectToMaterialPayload
+): Promise<{ success: boolean; message?: string }> => {
+  const result = await post<{ success: boolean; message?: string }>(
+    `${SEARCH_PREFIX}/collect-to-material`,
+    payload
+  )
+  return result
+}

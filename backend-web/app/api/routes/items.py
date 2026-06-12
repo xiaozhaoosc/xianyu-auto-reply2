@@ -869,46 +869,63 @@ async def search_items(
         }
 
 
-# ==================== 采集到素材库 ====================
-
 class CollectToMaterialRequest(PydanticBaseModel):
-    """采集商品到素材库请求"""
+    """商品采集到素材库的请求"""
     item_id: str
     title: str
-    price: str
-    description: str = ""
-    main_image: str = ""
-    item_url: str = ""
-    area: str = ""
-    seller_name: str = ""
+    description: str | None = None
+    price: float = 0.0
+    original_price: float | None = None
+    images: List[str] = []
+    address: str | None = None
+    condition: str = "全新"
 
 
-@items_router.post("/collect-to-material", response_model=ApiResponse)
+@items_router.post("/collect-to-material")
 async def collect_to_material(
-    req: CollectToMaterialRequest,
+    payload: CollectToMaterialRequest,
     current_user: User = Depends(deps.get_current_active_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-):
-    """将搜索结果采集到素材库"""
-    from app.services.product_publish_service import ProductMaterialService
-
+    db: AsyncSession = Depends(deps.get_db_session),
+) -> ApiResponse:
+    """
+    将搜索采集的商品直接快速保存到素材库中
+    """
     try:
-        svc = ProductMaterialService(session)
-        material = await svc.create(current_user.id, {
-            "title": req.title,
-            "description": req.description or f"采集自闲鱼 | 卖家: {req.seller_name} | 地区: {req.area}\n原始链接: {req.item_url}",
-            "price": float(req.price.replace("¥", "").replace(",", "").strip() or "1"),
-            "original_price": None,
-            "category": None,
-            "images": [req.main_image] if req.main_image else [],
-            "delivery_method": "express",
-            "postage": 0,
-            "address": req.area or None,
-            "brand": None,
-            "condition": "全新",
-            "remark": f"采集item_id: {req.item_id}",
-        })
-        return ApiResponse(success=True, message="采集成功，已保存到素材库", data={"material_id": material.id})
+        from common.models.product_material import ProductMaterial
+        from sqlalchemy import select
+
+        # 检查是否重复导入该商品
+        stmt = select(ProductMaterial).where(
+            ProductMaterial.user_id == current_user.id,
+            ProductMaterial.remark.like(f"%item_id={payload.item_id}%")
+        )
+        existing = await db.execute(stmt)
+        if existing.scalars().first():
+            return ApiResponse(success=False, message="该商品已存在于素材库中，请勿重复采集")
+
+        # 实例化商品素材并保存
+        material = ProductMaterial(
+            user_id=current_user.id,
+            title=payload.title,
+            description=payload.description or payload.title,
+            price=payload.price,
+            original_price=payload.original_price,
+            images=payload.images if payload.images else [],
+            delivery_method="express",
+            postage=0,
+            address=payload.address,
+            condition=payload.condition,
+            remark=f"采集导入 | item_id={payload.item_id}"
+        )
+        db.add(material)
+        await db.commit()
+
+        logger.info(f"商品 {payload.item_id} 成功保存至用户 {current_user.id} 的素材库")
+        return ApiResponse(
+            success=True,
+            message="商品成功采集并保存至素材库！",
+            data={"material_id": material.id}
+        )
     except Exception as e:
-        logger.error(f"采集到素材库失败: {e}")
+        logger.error(f"商品采集转素材失败: {e}")
         return ApiResponse(success=False, message=f"采集失败: {str(e)}")

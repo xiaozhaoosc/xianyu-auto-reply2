@@ -1,4 +1,4 @@
-﻿"""
+"""
 滑块轨迹生成器
 
 基于物理加速度模型生成"人类化三阶段"的滑动轨迹，用于驱动 Playwright
@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import math
 import random
 from typing import Any, Dict, List, Tuple
 
@@ -182,21 +183,111 @@ class TrajectoryGenerator:
         )
         return trajectory
 
-    def generate_human_trajectory(self, distance: float) -> List[Tuple[float, float, float]]:
-        """对外暴露的统一入口，使用人类化三阶段轨迹。
+    def generate_bezier_overshoot_trajectory(self, distance: float) -> List[Tuple[float, float, float]]:
+        """基于三次贝塞尔曲线和超调回退机制生成高度拟人化的滑动轨迹。
+        
+        适用于中长距离滑块，模拟人类滑过头、停顿纠正、微调拉回的过程。
+        """
+        # 决定是否超调以及超调量 (3 到 7 像素)
+        overshoot_px = random.randint(3, 7) if random.random() < 0.6 else 0
+        slide_distance = distance + overshoot_px
+        
+        # 随机步数，通常 12 到 22 步，点数适当密集有利于过滑块，但又不会让 CDP 通信过慢
+        steps = random.randint(12, 18)
+        
+        # 三次贝塞尔曲线控制点配置：P0(0,0), P3(1,1)，P1和P2随机波动
+        # P1_x 靠近起点加速区，P2_x 靠近终点减速区
+        p1_x = random.uniform(0.15, 0.35)
+        p1_y = random.uniform(0.0, 0.25)
+        p2_x = random.uniform(0.65, 0.85)
+        p2_y = random.uniform(0.75, 1.0)
+        
+        trajectory: List[Tuple[float, float, float]] = []
+        
+        # 1. 产生主滑动轨迹（滑动到 slide_distance）
+        # Y轴采用正弦曲线微偏离（由于手腕转动产生的向上/下弧度偏移，通常在中间达到最大，两端收拢）
+        y_amplitude = random.uniform(-2.5, 2.5) # 圆弧幅度
+        
+        # 设定滑动单步基准延迟 10ms 到 20ms
+        base_delay = random.uniform(0.010, 0.020)
+        
+        for i in range(1, steps + 1):
+            t = i / steps
+            # 贝塞尔插值 progress_x
+            progress_x = self._bezier_curve(0.0, p1_x, p2_x, 1.0, t)
+            x = slide_distance * progress_x
+            
+            # Y 轴 = 弧度偏移 + 物理微抖动
+            y_arc = math.sin(math.pi * t) * y_amplitude
+            y_shake = random.uniform(-0.5, 0.5)
+            y = y_arc + y_shake
+            
+            # 速度控制：起步和收尾段由于人类精细控制导致速度慢、延时高；中间段快速移动、延时低
+            # 通过一个抛物线函数来调节每一帧的 delay
+            delay_factor = 1.0 + 1.2 * ((t - 0.5) ** 2) * 4 # t=0.5时 factor=1.0, t=0和1时 factor=2.2
+            delay = base_delay * delay_factor * random.uniform(0.9, 1.1)
+            
+            trajectory.append((x, y, delay))
+            
+        # 2. 如果存在超调，产生纠正回退轨迹
+        if overshoot_px > 0:
+            # 模拟人类“划过头 -> 脑部反应并停顿 -> 微调拉回”的三个微阶段
+            # 阶段 2.1：在超调点微停顿 (50ms - 120ms)
+            pause_time = random.uniform(0.05, 0.12)
+            last_x, last_y, _ = trajectory[-1]
+            trajectory.append((last_x, last_y + random.uniform(-0.5, 0.5), pause_time))
+            
+            # 阶段 2.2：用 2-3 步缓慢拉回真正的目标位置
+            back_steps = random.randint(2, 3)
+            back_base_delay = random.uniform(0.015, 0.025) # 拉回的速度一般较慢且谨慎
+            
+            for j in range(1, back_steps + 1):
+                back_t = j / back_steps
+                # 线性插值拉回
+                current_overshoot = overshoot_px * (1 - back_t)
+                x_back = distance + current_overshoot
+                y_back = last_y + random.uniform(-0.4, 0.4)
+                delay_back = back_base_delay * random.uniform(0.85, 1.15)
+                trajectory.append((x_back, y_back, delay_back))
+                
+        # 3. 强制最后一步精确落在实际目标距离
+        if trajectory:
+            last_x, last_y, last_d = trajectory[-1]
+            trajectory[-1] = (distance, last_y, last_d)
+            
+        logger.info(
+            f"【{self.pure_user_id}】🎨 生成贝塞尔超调轨迹：{len(trajectory)}步 "
+            f"(主滑动{steps}步、超调量{overshoot_px}px)、总物理步数={len(trajectory)}、目标距离={distance:.1f}px"
+        )
+        return trajectory
 
+    def generate_human_trajectory(self, distance: float) -> List[Tuple[float, float, float]]:
+        """对外暴露的统一入口，混合使用多种人类化轨迹生成策略（三阶段物理模型 / 贝塞尔超调回退）。
+        
         Args:
             distance: 滑动距离（像素）
-
+            
         Returns:
             轨迹点列表
         """
         try:
-            trajectory = self.generate_physics_trajectory(distance)
+            # 随机选择轨迹生成策略，增大行为的异构性和风控绕过率
+            # 距离较小时，超调拉回显得不够合理，强制使用物理三阶段
+            if distance < 100:
+                strategy = "physics"
+            else:
+                strategy = random.choice(["physics", "bezier_overshoot"])
+
+            if strategy == "physics":
+                trajectory = self.generate_physics_trajectory(distance)
+                model_name = "human_three_phase"
+            else:
+                trajectory = self.generate_bezier_overshoot_trajectory(distance)
+                model_name = "bezier_overshoot"
 
             self.current_trajectory_data = {
                 "distance": distance,
-                "model": "human_three_phase",
+                "model": model_name,
                 "total_steps": len(trajectory),
                 "trajectory_points": trajectory.copy(),
                 "final_left_px": 0,
@@ -205,8 +296,21 @@ class TrajectoryGenerator:
             }
             return trajectory
         except Exception as e:
-            logger.error(f"【{self.pure_user_id}】生成轨迹时出错: {e}")
-            return []
+            logger.error(f"【{self.pure_user_id}】混合生成轨迹出错，兜底物理模型: {e}")
+            try:
+                trajectory = self.generate_physics_trajectory(distance)
+                self.current_trajectory_data = {
+                    "distance": distance,
+                    "model": "physics_fallback",
+                    "total_steps": len(trajectory),
+                    "trajectory_points": trajectory.copy(),
+                    "final_left_px": 0,
+                    "completion_used": False,
+                    "completion_steps": 0,
+                }
+                return trajectory
+            except Exception:
+                return []
 
     def generate_standard_trajectory(self, distance: int) -> List[Dict[str, Any]]:
         """生成标准三阶段（加速-匀速-减速）人类轨迹，作为可选备用策略保留。
