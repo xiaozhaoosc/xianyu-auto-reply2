@@ -63,23 +63,27 @@ if (Test-Path $envFile) {
     Write-Warn "未在根目录下检测到 .env 配置文件！"
 }
 
-# 2.6 清理占用端口的旧服务进程以防端口冲突，并关闭旧调试终端窗口
-Write-Info "正在清理可能占用调试端口的旧服务进程..."
+# 2.6 清理占用端口的旧服务进程以防端口冲突，并关闭其宿主终端窗口
+Write-Info "正在清理可能占用调试端口的旧服务进程及关闭旧终端窗口..."
 $ports = @(8089, 8090, 8091, 8092, 9000, 9001)
 foreach ($port in $ports) {
     $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
     if ($conn) {
         foreach ($c in $conn) {
-            Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+            $pid = $c.OwningProcess
+            # 获取父进程（如启动它的 cmd.exe 或者是 powershell.exe）并关闭对应窗口
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $pid" -ErrorAction SilentlyContinue
+            if ($proc -and $proc.ParentProcessId) {
+                $parent = Get-Process -Id $proc.ParentProcessId -ErrorAction SilentlyContinue
+                if ($parent -and ($parent.ProcessName -eq 'cmd' -or $parent.ProcessName -eq 'powershell' -or $parent.ProcessName -eq 'pwsh')) {
+                    Stop-Process -Id $proc.ParentProcessId -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
         }
-        Write-Success "已清理端口 $port 上的旧服务进程"
     }
 }
-Write-Info "正在自动查找并关闭旧的调试服务终端窗口..."
-Get-Process cmd, powershell, pwsh -ErrorAction SilentlyContinue | Where-Object {
-    $_.MainWindowTitle -match '\[Backend-Web :8089\]|\[WebSocket :8090\]|\[Scheduler :8091\]|\[Promotion-Backend :8092\]|\[Frontend :9000\]|\[Promotion-Frontend :9001\]'
-} | Stop-Process -Force
-Write-Success "旧终端窗口关闭清理完成！"
+Write-Success "端口及旧终端窗口自动回收完成！"
 
 Write-Header "正在多终端窗口中拉起各项子服务..."
 
