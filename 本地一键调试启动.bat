@@ -27,10 +27,10 @@ if exist ".env" (
     echo [!] Warning: .env file not found!
 )
 
-:: 3. Automatically clean up processes occupying debug ports to prevent conflict
-echo [*] Cleaning up old processes occupying debug ports...
-powershell -Command "foreach($port in @(8089, 8090, 8091, 8092, 9000, 9001)){$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue; if($conn){foreach($c in $conn){Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue}}}"
-echo [+] Ports cleanup completed!
+:: 3. Automatically clean up processes occupying debug ports to prevent conflict and close old terminals
+echo [*] Cleaning up old debug processes and closing old terminal windows...
+powershell -Command "foreach($port in @(8089, 8090, 8091, 8092, 9000, 9001)){$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue; if($conn){foreach($c in $conn){Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue}}}; Get-Process cmd, powershell, pwsh -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match '\[Backend-Web :8089\]|\[WebSocket :8090\]|\[Scheduler :8091\]|\[Promotion-Backend :8092\]|\[Frontend :9000\]|\[Promotion-Frontend :9001\]' } | Stop-Process -Force"
+echo [+] Ports and old terminal windows cleanup completed!
 
 :: 4. Launch 6 services concurrently in separate windows for interactive debugging
 echo [*] Launching 6 debug windows...

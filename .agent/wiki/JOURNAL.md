@@ -100,3 +100,28 @@
 | 任务模块 | 交付成果 | 验证状态 | 备注 |
 | :--- | :--- | :--- | :--- |
 | **单品控制流转** | 在 Goofish Scheduled Crawler 结果页面提供了温暖橙的「转草稿」和森林绿的「发布」功能 | ✅ 编译无误 & 代码入库推送 | 已经成功在本地进行 `npx tsc` 校验，无任何相关编译错误，并 push 至远程 `dev_agy_0612` |
+
+---
+
+## 📅 2026-06-12 (五次迭代) — 采集流转免跳转与一键启动脚本自动回收终端
+
+### [Morning_Briefing]
+- **昨日未竟**: 将「转草稿」和「发布」操作改为仅提示成功、不跳转页面，避免打断当前搜索；同时在一键启动脚本中实现对原有调试窗口的进程精准查杀与自动关闭，解决窗口残留过多的问题。
+- **隐患预警**: 精准查杀基于窗口 `MainWindowTitle` 的正则过滤，若用户手动修改了窗口 Title 或通过非标准 Shell 启动，可能出现偶发不被杀死的现象。
+- **今日建议**:
+  1. 通过 PowerShell 的 `Get-Process` 对 `cmd`, `powershell`, `pwsh` 的 `MainWindowTitle` 进行多条件正则匹配以实现 100% 覆盖。
+
+### [Daily_Summary]
+
+| 模块/文件 | 变更类型 | 变更描述 |
+| :--- | :--- | :--- |
+| [GoofishScheduledCrawler.tsx](file:///D:/IdeaProjects/xianyu-auto-reply2/frontend/src/pages/crawler/GoofishScheduledCrawler.tsx) | 修改 | 去除 `handleToDraftSingle` 和 `handlePublishSingle` 方法中的 `useNavigate` 重定向与延时，仅在请求成功后发出成功的 Toast 消息。 |
+| [本地一键调试启动.bat](file:///D:/IdeaProjects/xianyu-auto-reply2/本地一键调试启动.bat) | 修改 | 在端口查杀后，追加 PowerShell 根据正则 Title 过滤 `cmd, powershell, pwsh` 窗口并强杀的指令，确保二次启动时清除桌面上残留的旧终端。 |
+| [本地一键调试启动.ps1](file:///D:/IdeaProjects/xianyu-auto-reply2/本地一键调试启动.ps1) | 修改 | 在端口循环查杀后，引入 `Get-Process cmd, powershell, pwsh` 管道逻辑，用相同正则强杀并关闭旧窗口。 |
+
+### [Project_Reflection]
+
+| 任务模块 | 交付成果 | 验证状态 | 备注 |
+| :--- | :--- | :--- | :--- |
+| **交互优化** | 采集流转完成且支持免跳转体验 | ✅ 验证无误 | 用户点击「转草稿」/「发布」直接出 Toast 气泡提示，不破坏原检索结果。 |
+| **终端进程回收** | 双击 `.bat` 或运行 `.ps1` 重启服务会自动强杀旧调试终端 | ✅ 成功应用 | 精准清理，保持系统桌面清爽。 |

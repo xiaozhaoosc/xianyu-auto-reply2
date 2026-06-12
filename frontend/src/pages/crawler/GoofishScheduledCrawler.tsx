@@ -101,7 +101,7 @@ export function GoofishScheduledCrawler() {
   const [sellerResults, setSellerResults] = useState<GoofishCrawlItem[]>([])
   const [sellerLoading, setSellerLoading] = useState(false)
 
-  // 1. 采集并转草稿（跳转至素材编辑管理）
+  // 1. 采集并转草稿
   const handleToDraftSingle = async (e: React.MouseEvent, item: GoofishCrawlItem) => {
     e.preventDefault()
     e.stopPropagation()
@@ -120,10 +120,7 @@ export function GoofishScheduledCrawler() {
         condition: '全新'
       })
       if (result.success) {
-        addToast({ type: 'success', message: '草稿已就绪！即将前往素材页面进行编辑...' })
-        setTimeout(() => {
-          navigate('/product-publish/materials')
-        }, 1000)
+        addToast({ type: 'success', message: '转草稿成功！已保存至本地素材库' })
       } else {
         addToast({ type: 'warning', message: result.message || '转草稿失败' })
       }
@@ -132,7 +129,7 @@ export function GoofishScheduledCrawler() {
     }
   }
 
-  // 2. 采集并跳转发布（跳转至批量发布配置）
+  // 2. 采集并发布
   const handlePublishSingle = async (e: React.MouseEvent, item: GoofishCrawlItem) => {
     e.preventDefault()
     e.stopPropagation()
@@ -151,10 +148,7 @@ export function GoofishScheduledCrawler() {
         condition: '全新'
       })
       if (result.success) {
-        addToast({ type: 'success', message: '商品已加入发布序列！即将前往发布页...' })
-        setTimeout(() => {
-          navigate('/product-publish/batch')
-        }, 1000)
+        addToast({ type: 'success', message: '发布配置成功！已保存至本地素材库' })
       } else {
         addToast({ type: 'warning', message: result.message || '发布配置准备失败' })
       }

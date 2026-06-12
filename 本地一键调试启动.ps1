@@ -63,7 +63,7 @@ if (Test-Path $envFile) {
     Write-Warn "未在根目录下检测到 .env 配置文件！"
 }
 
-# 2.6 清理占用端口的旧服务进程以防端口冲突
+# 2.6 清理占用端口的旧服务进程以防端口冲突，并关闭旧调试终端窗口
 Write-Info "正在清理可能占用调试端口的旧服务进程..."
 $ports = @(8089, 8090, 8091, 8092, 9000, 9001)
 foreach ($port in $ports) {
@@ -75,6 +75,11 @@ foreach ($port in $ports) {
         Write-Success "已清理端口 $port 上的旧服务进程"
     }
 }
+Write-Info "正在自动查找并关闭旧的调试服务终端窗口..."
+Get-Process cmd, powershell, pwsh -ErrorAction SilentlyContinue | Where-Object {
+    $_.MainWindowTitle -match '\[Backend-Web :8089\]|\[WebSocket :8090\]|\[Scheduler :8091\]|\[Promotion-Backend :8092\]|\[Frontend :9000\]|\[Promotion-Frontend :9001\]'
+} | Stop-Process -Force
+Write-Success "旧终端窗口关闭清理完成！"
 
 Write-Header "正在多终端窗口中拉起各项子服务..."
 
