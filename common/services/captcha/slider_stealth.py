@@ -262,17 +262,17 @@ class PlaywrightSliderService:
             logger.info(f"【{self.pure_user_id}】启动浏览器，headless模式: {self.headless}")
             logger.info(f"【{self.pure_user_id}】使用用户数据目录: {self.user_data_dir}")
             
-            # 使用持久化上下文（参照旧框架，保存登录状态）
+            # 使用持久化上下文，动态对齐浏览器指纹特征，防范指纹分裂风控
             launch_kwargs = {
                 'headless': self.headless,
                 'args': args,
-                'viewport': {'width': 1980, 'height': 1024},
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-                'locale': 'zh-CN',
+                'viewport': {'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                'user_agent': browser_features['user_agent'],
+                'locale': browser_features['locale'],
                 'accept_downloads': True,
                 'ignore_https_errors': True,
                 'extra_http_headers': {
-                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+                    'Accept-Language': browser_features['accept_lang']
                 }
             }
             executable_path = self._find_browser_executable()
@@ -1008,7 +1008,7 @@ class PlaywrightSliderService:
                     self.page.mouse.move(
                         current_x,
                         current_y,
-                        steps=random.randint(1, 3)
+                        steps=1
                     )
 
                     actual_delay = delay * random.uniform(0.9, 1.1)
@@ -1028,17 +1028,30 @@ class PlaywrightSliderService:
                         except Exception:
                             pass
 
-                # 刮刮乐特殊处理
+                # 释放前在终点微抖动与停顿，模拟真实人类肌肉释放动作 (120ms - 250ms)
                 is_scratch = self.verification_checker.is_scratch_captcha()
                 if is_scratch:
-                    pause_duration = random.uniform(0.3, 0.5)
+                    pause_duration = random.uniform(0.35, 0.6)
                     logger.warning(f"【{self.pure_user_id}】🎨 刮刮乐模式：在目标位置停顿{pause_duration:.2f}秒观察...")
                     time.sleep(pause_duration)
+                else:
+                    pause_duration = random.uniform(0.12, 0.25)
+                    time.sleep(pause_duration)
+                    # 模拟手指释放前的极微小抖动 (±0.5px)
+                    for _ in range(2):
+                        try:
+                            self.page.mouse.move(
+                                current_x + random.uniform(-0.5, 0.5),
+                                current_y + random.uniform(-0.5, 0.5),
+                                steps=1
+                            )
+                        except Exception:
+                            pass
+                        time.sleep(random.uniform(0.01, 0.02))
 
                 # 释放鼠标
-                time.sleep(random.uniform(0.02, 0.05))
                 self.page.mouse.up()
-                time.sleep(random.uniform(0.01, 0.03))
+                time.sleep(random.uniform(0.05, 0.12))
 
                 # 触发click事件
                 try:
