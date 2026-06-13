@@ -1,3 +1,16 @@
+server:
+  port: ${GRPC_SERVER_PORT:9091}
+
+spring:
+  application:
+    name: platform-grpc
+  profiles:
+    include: common
+
 grpc:
   server:
     port: ${GRPC_PORT:9090}
+  client:
+    python-runtime:
+      address: 'static://${PYTHON_RUNTIME_HOST:localhost}:${PYTHON_RUNTIME_PORT:8090}'
+      negotiationType: plaintext
