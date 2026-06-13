@@ -133,7 +133,8 @@ class SliderHandler:
         logger.warning("=" * 60)
 
         # 检查是否为有头模式
-        env_headless = os.environ.get("BROWSER_HEADLESS", "true").lower() == "true"
+        from app.core.config import get_settings
+        env_headless = get_settings().browser_headless
         if env_headless:
             logger.error("❌ 当前处于【无头模式 (headless=True)】，无法弹出浏览器供人工操作。")
             logger.error("👉 请将 .env 中的 BROWSER_HEADLESS 改为 false，重启服务后再尝试！")
@@ -428,7 +429,8 @@ class SliderHandler:
                 # 普通滑块使用PlaywrightSliderService处理
                 try:
                     from common.services.captcha.slider_stealth import PlaywrightSliderService
-                    env_headless = os.environ.get("BROWSER_HEADLESS", "true").lower() == "true"
+                    from app.core.config import get_settings
+                    env_headless = get_settings().browser_headless
                     slider_service = PlaywrightSliderService(
                         user_id=self.user_id,
                         enable_learning=True,

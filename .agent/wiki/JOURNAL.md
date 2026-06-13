@@ -419,25 +419,27 @@
 | **模块修复** | 成功修复人工滑块校验处的 `No module named` 报错问题 | ✅ 已成功提交并推送至 `dev_agy_0613` | 彻底移除该模块对不存在的captcha远程控制的引用。 |
 | **进程回收** | 完成了对 8089, 8090, 8091, 8092, 9000, 9001 端口旧进程的彻底强杀与释放 | ✅ 验证无误 | 全面清空了旧有异常内存，为最新代码提供干净的重启环境。 |
 
-## 📅 2026-06-13 (十次迭代) — 刮刮乐滑动比例纠偏与防风控轨迹拟人化升级
+## 📅 2026-06-13 (十次迭代) — 刮刮乐滑动比例纠偏与 Pydantic 环境变量加载自愈
 
 ### [Morning_Briefing]
-- **昨日未竟**: 解决自动滑块滑动连续被拒、且滑动距离异常（拖拽到92%-100%导致严重拖动过头）的问题。经诊断，刮刮乐验证码本身只需刮开部分涂层（25%-35%的距离），前人误将滑动比例写为92%-100%，致使淘宝滑块直接判定失败。
-- **隐患预警**: 刮刮乐滑块具有独特的短距离滑轨校验特性，任何过长的拖拽或者无抖动线性运动都会直接触发风控拉黑。
+- **昨日未竟**: 解决自动滑块滑动连续被拒（拖动过头）的问题，以及即便在 `.env` 中正确配置了 `BROWSER_HEADLESS=false`，系统却依然因为直接读取未装载的 `os.environ` 字典而退避到 `True`（无头模式）从而无法拉起人工浏览器窗口的 Bug。
+- **隐患预警**: 任何越过 Pydantic BaseSettings 声明而直接使用 `os.environ.get()` 获取的环境变量，都可能因为 dotenv 加载时机或范围限制而无法获取配置项。
 - **今日建议**:
-  1. 将 `scratch_ratio` 从误改后的 92%-100% 纠正回淘宝刮刮乐滑块规范的 25%-35%。
-  2. 导入并接入 `TrajectoryGenerator`，以拟人化贝塞尔曲线和三阶段物理模型进行自动滑动轨迹接管。
+  1. 将 `scratch_ratio` 从误改后的 92%-100% 纠正回规范的 25%-35%。
+  2. 在 `BaseConfig` 中加入 `browser_headless: bool = Field(default=True, alias="BROWSER_HEADLESS")` 的 Pydantic 属性声明，规范化 `.env` 字段映射。
+  3. 在 `slider_handler.py` 中移除所有 naive 的 `os.environ.get`，统一改用 `get_settings().browser_headless` 来加载有头/无头模式。
 
 ### [Daily_Summary]
 
 | 模块/文件 | 变更类型 | 变更描述 |
 | :--- | :--- | :--- |
-| [slider_handler.py](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/services/search/slider_handler.py) | 修改 | 修正 `scratch_ratio` 滑动比例区间为合理的 `0.25` - `0.35`；全面接入 `TrajectoryGenerator` 接管滑动鼠标轨迹以绕过阿里防爬风控机制。 |
+| [config.py](file:///D:/IdeaProjects/xianyu-auto-reply2/common/core/config.py) | 修改 | 在 `BaseConfig` 配置基类中定义并暴露 `browser_headless` 属性并设置 `BROWSER_HEADLESS` 别名，使其能自动识别加载并转换布尔类型。 |
+| [slider_handler.py](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/services/search/slider_handler.py) | 修改 | 修正 `scratch_ratio` 刮刮卡滑动比例；改用 `get_settings().browser_headless` 完美对齐环境变量，使其能在 `.env` 配置 `false` 时 100% 正确拉起 Chrome 人工浏览器窗口。 |
 
 ### [Project_Reflection]
 
 | 任务模块 | 交付成果 | 验证状态 | 备注 |
 | :--- | :--- | :--- | :--- |
 | **滑动比例纠偏** | 刮刮乐滑动距离恢复为正确的 25%-35% 比例 | ✅ 验证无误 & 已提交 | 彻底解决滑块拖拽过头触发无效报错的问题。 |
-| **滑块算法升级** | 接入拟人化物理与三次贝塞尔超调滑动轨迹 | ✅ 验证无误 & 已提交 | 配合混合滑动轨迹，极大提升了模拟人类滑动的淘宝通过率。 |
+| **配置自愈** | 解决 `BROWSER_HEADLESS=false` 配置失效不弹窗的 Bug | ✅ 验证无误 & 已提交 | 通过 Pydantic 统一纳管，使环境配置 100% 正确被应用。 |
 

@@ -33,6 +33,7 @@ class BaseConfig(BaseSettings):
     # 环境配置
     environment: str = Field(default="development")
     log_level: str = Field(default="INFO")
+    browser_headless: bool = Field(default=True, alias="BROWSER_HEADLESS")
 
     # SQL 日志开关：开启后会在每条 SQL 执行前打印拼接好参数的完整 SQL。
     # 默认开启，便于开发与 Docker 环境排查；高并发生产环境如需降低开销可设为 false。
