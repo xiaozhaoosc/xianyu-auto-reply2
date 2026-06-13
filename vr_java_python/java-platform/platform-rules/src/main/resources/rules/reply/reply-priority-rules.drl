@@ -1,0 +1,21 @@
+package rules.reply
+
+import com.xyun.platform.rules.fact.ReplyCheckFact
+
+// 规则1：关键词匹配优先
+rule "keyword_first"
+    salience 100
+    when
+        $fact : ReplyCheckFact(matchedKeyword != null, replyStrategy == "none")
+    then
+        $fact.setReplyStrategy("keyword");
+end
+
+// 规则2：无关键词时走 AI
+rule "ai_fallback"
+    salience 50
+    when
+        $fact : ReplyCheckFact(matchedKeyword == null, replyStrategy == "none")
+    then
+        $fact.setReplyStrategy("ai");
+end

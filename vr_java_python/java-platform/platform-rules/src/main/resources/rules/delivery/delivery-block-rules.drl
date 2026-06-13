@@ -1,0 +1,33 @@
+package rules.delivery
+
+import com.xyun.platform.rules.fact.DeliveryCheckFact
+
+// 规则1：黑名单用户禁止发货
+rule "blacklist_block"
+    salience 100
+    when
+        $fact : DeliveryCheckFact(blacklisted == true, deliveryBlocked == false)
+    then
+        $fact.setDeliveryBlocked(true);
+        $fact.setBlockReason("买家在黑名单中");
+        $fact.setAutoCloseOrder(true);
+end
+
+// 规则2：未下单用户禁止发货
+rule "not_ordered_block"
+    salience 90
+    when
+        $fact : DeliveryCheckFact(ordered == false, deliveryBlocked == false)
+    then
+        $fact.setDeliveryBlocked(true);
+        $fact.setBlockReason("买家未下单");
+end
+
+// 规则3：黑名单用户关闭订单后继续发卡券
+rule "blacklist_card_only"
+    salience 80
+    when
+        $fact : DeliveryCheckFact(blacklisted == true, autoCloseOrder == true)
+    then
+        $fact.setOnlyCardAfterClose(true);
+end
