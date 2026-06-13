@@ -18,6 +18,11 @@
             <artifactId>platform-common</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.xyun</groupId>
+            <artifactId>platform-server</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.jobrunr</groupId>
             <artifactId>jobrunr-spring-boot-3-starter</artifactId>
         </dependency>
