@@ -123,6 +123,7 @@ class BrowserManager:
             launch_kwargs = dict(
                 headless=headless,
                 args=browser_args,
+                ignore_default_args=["--enable-automation"],
                 user_agent=browser_features['user_agent'],
                 viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
                 locale=browser_features['locale'],
