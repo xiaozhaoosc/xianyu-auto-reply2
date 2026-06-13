@@ -21,3 +21,4 @@
 - [架构编年史 (CHRONICLE.md)](file:///D:/IdeaProjects/xianyu-auto-reply2/.agent/wiki/CHRONICLE.md)
 - [技术债账本 (DEBT_LEADGER.md)](file:///D:/IdeaProjects/xianyu-auto-reply2/.agent/wiki/DEBT_LEADGER.md)
 - [建议与灵感收件箱 (INBOX.md)](file:///D:/IdeaProjects/xianyu-auto-reply2/.agent/wiki/INBOX.md)
+- [滑块绕过方案技术白皮书 (taobao_slider_bypass_solutions.md)](file:///D:/IdeaProjects/xianyu-auto-reply2/.agent/wiki/taobao_slider_bypass_solutions.md)
