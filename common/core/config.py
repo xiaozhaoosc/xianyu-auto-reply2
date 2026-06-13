@@ -82,6 +82,11 @@ class BaseConfig(BaseSettings):
     # 通过环境变量 BACKUP_DIR 配置，禁止写死 localhost / 绝对路径
     backup_dir: str = Field(default="backups", alias="BACKUP_DIR")
 
+    def __init__(self, **values):
+        super().__init__(**values)
+        import os
+        os.environ["BROWSER_HEADLESS"] = str(self.browser_headless).lower()
+
     @property
     def database_url(self) -> str:
         """同步数据库连接URL"""
