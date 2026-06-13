@@ -9,6 +9,8 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+ROOT_DIR=$(pwd)
+
 write_header() {
     echo -e "${CYAN}\n=================================================="
     echo -e "  $1"
@@ -144,11 +146,10 @@ run_in_terminal() {
         xterm -T "$title" -e "bash -c 'cd $dir && $cmd; exec bash'" &
     else
         # 降级：无桌面环境或未安装图形终端时，直接在后台静默运行并输出日志到 logs/
-        mkdir -p logs
+        mkdir -p "$ROOT_DIR/logs"
         log_file="logs/${title// /_}.log"
         write_warn "未检测到图形终端，将在后台静默拉起 $title 并重定向输出至 $log_file"
-        cd "$dir" && eval "$cmd" > "../$log_file" 2>&1 &
-        cd - > /dev/null
+        (cd "$dir" && eval "$cmd" > "$ROOT_DIR/$log_file" 2>&1) &
     fi
 }
 
