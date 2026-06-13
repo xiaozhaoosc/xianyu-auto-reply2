@@ -35,6 +35,28 @@ write_error() {
 
 write_header "闲鱼自动回复与运营系统 - 本地开发调试启动器 (Ubuntu)"
 
+# 检测是否在 Windows 的 WSL 或 Git Bash 等模拟终端中运行，防止无 GUI 导致滑块无法弹窗
+is_windows=false
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "mingw" ]]; then
+    is_windows=true
+elif grep -qE "(Microsoft|microsoft)" /proc/version 2>/dev/null; then
+    is_windows=true
+fi
+
+if [ "$is_windows" = true ]; then
+    write_error "=================================================="
+    write_error "⚠️ 检测到您在 Windows 的 Git Bash 或 WSL 环境下运行本脚本！"
+    write_error "  由于 Git Bash 和 WSL 默认无法直接弹出 Windows 物理桌面的有头浏览器，"
+    write_error "  在进行滑块验证人工操作时，浏览器窗口将【无法弹窗】！"
+    write_error ""
+    write_error "👉 解决方案："
+    write_error "  请直接双击运行根目录下的 【本地一键调试启动.bat】"
+    write_error "  或者在 Windows PowerShell 中运行 【本地一键调试启动.ps1】"
+    write_error "=================================================="
+    read -p "按回车键退出..."
+    exit 1
+fi
+
 # 1. 检查 Docker 开发底座状态
 write_info "正在检查 MySQL & Redis 容器底座状态..."
 if ! command -v docker &> /dev/null; then
