@@ -17,5 +17,16 @@
             <groupId>com.xyun</groupId>
             <artifactId>platform-common</artifactId>
         </dependency>
+        <!-- 引入 platform-server 以复用 Mapper 接口 -->
+        <dependency>
+            <groupId>com.xyun</groupId>
+            <artifactId>platform-server</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- Sa-Token 权限认证 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot3-starter</artifactId>
+        </dependency>
     </dependencies>
 </project>
