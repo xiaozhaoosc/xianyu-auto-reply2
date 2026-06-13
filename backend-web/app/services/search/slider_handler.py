@@ -315,9 +315,9 @@ class SliderHandler:
                     return 300;
                 }
             """)
-            # 滑动距离：滑轨宽度减去按钮宽度（约30px），再加少量随机偏移
+            # 刮刮乐仅需滑开 25% - 35% 的距离露出涂层验证码即可，切勿拖到最右边
             button_width = button_box.get('width', 30)
-            scratch_ratio = random.uniform(0.92, 1.0)
+            scratch_ratio = random.uniform(0.25, 0.35)
             slide_distance = (estimated_track_width - button_width) * scratch_ratio
 
             logger.warning(f"🎨 刮刮乐模式：计划滑动{scratch_ratio*100:.1f}%距离 ({slide_distance:.2f}px)，滑轨宽度={estimated_track_width}px")
