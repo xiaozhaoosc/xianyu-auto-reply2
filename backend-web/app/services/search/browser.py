@@ -80,8 +80,9 @@ class BrowserManager:
         if self.browser:
             return True
 
-        # 动态读取环境变量，默认为 True
-        env_headless = os.environ.get("BROWSER_HEADLESS", "true").lower() == "true"
+        # 动态读取配置，默认为 True
+        from app.core.config import get_settings
+        env_headless = get_settings().browser_headless
         if headless is None:
             headless = env_headless
 

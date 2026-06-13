@@ -82,8 +82,9 @@ class XianyuPublisher:
             return
 
         # Docker环境下强制无头模式（容器内无显示器，有头模式会报错）
-        if not headless and os.environ.get("BROWSER_HEADLESS", "").lower() == "true":
-            logger.info("检测到BROWSER_HEADLESS=true，强制使用无头模式")
+        from app.core.config import get_settings
+        if not headless and get_settings().browser_headless:
+            logger.info("检测到 BROWSER_HEADLESS=true，强制使用无头模式")
             headless = True
 
         if self.is_initialized and force_reinit:

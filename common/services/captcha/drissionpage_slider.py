@@ -72,7 +72,8 @@ class DrissionPageSliderService:
         self.refresh_next = False
 
         # Docker 环境强制无头
-        if not headless and os.environ.get("BROWSER_HEADLESS", "").lower() == "true":
+        from common.core.config import get_settings
+        if not headless and get_settings().browser_headless:
             logger.info(f"【{user_id}】检测到 BROWSER_HEADLESS=true，强制无头模式")
             headless = True
         self.headless = headless

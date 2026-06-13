@@ -430,7 +430,8 @@ class CookieRenewBrowserService:
                 "timezone_id": "Asia/Shanghai",
             }
             # Docker环境下强制无头模式（容器内无显示器）
-            if os.environ.get("BROWSER_HEADLESS", "").lower() == "true":
+            from common.core.config import get_settings
+            if get_settings().browser_headless:
                 launch_kwargs["headless"] = True
 
             chromium_path = get_chromium_executable_path()

@@ -110,8 +110,9 @@ class XianyuSliderStealth(PlaywrightSliderService):
         
         # 设置headless模式
         # Docker环境下强制无头模式（容器内无显示器，有头模式会报错）
-        if show_browser and os.environ.get("BROWSER_HEADLESS", "").lower() == "true":
-            logger.info(f"【{self.pure_user_id}】检测到BROWSER_HEADLESS=true，忽略show_browser，强制使用无头模式")
+        from common.core.config import get_settings
+        if show_browser and get_settings().browser_headless:
+            logger.info(f"【{self.pure_user_id}】检测到 BROWSER_HEADLESS=true，忽略show_browser，强制使用无头模式")
             self.headless = True
         else:
             self.headless = not show_browser
