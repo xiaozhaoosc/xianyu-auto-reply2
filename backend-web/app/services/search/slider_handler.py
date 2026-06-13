@@ -127,56 +127,49 @@ class SliderHandler:
         max_retries: int = 3,
         wait_for_completion: bool = True
     ) -> bool | str:
-        """人工处理刮刮乐滑块（远程控制）"""
+        """人工处理刮刮乐滑块（等待用户在有头浏览器中操作）"""
         logger.warning("=" * 60)
         logger.warning("🎨 检测到刮刮乐验证，需要人工处理！")
         logger.warning("=" * 60)
 
+        # 检查是否为有头模式
+        env_headless = os.environ.get("BROWSER_HEADLESS", "true").lower() == "true"
+        if env_headless:
+            logger.error("❌ 当前处于【无头模式 (headless=True)】，无法弹出浏览器供人工操作。")
+            logger.error("👉 请将 .env 中的 BROWSER_HEADLESS 改为 false，重启服务后再尝试！")
+            return False
+
+        logger.warning("💡 请在弹出的 Chrome 浏览器窗口中，手动完成滑块/刮刮乐验证。")
+        
+        if not wait_for_completion:
+            logger.warning("⚠️ 不等待验证完成，直接返回")
+            return 'need_captcha'
+
+        # 循环检测验证码是否消失或成功通过
+        max_wait_time = 120  # 等待 120 秒
+        check_interval = 2
+        elapsed_time = 0
+        logger.warning(f"⏳ 开始等待人工操作，最长等待时间: {max_wait_time} 秒...")
+
         try:
-            from app.utils.captcha_remote_control import captcha_controller
-
-            # 创建远程控制会话
-            logger.warning(f"🌐 启动远程控制会话: {self.user_id}")
-            await captcha_controller.create_session(self.user_id, page)
-
-            # 获取控制页面URL
-            local_ip = self._get_server_ip()
-            control_url = f"http://{local_ip}:8000/api/captcha/control/{self.user_id}"
-
-            logger.warning("=" * 60)
-            logger.warning(f"🌐 远程控制已启动！")
-            logger.warning(f"📱 请访问以下网址进行验证：")
-            logger.warning(f"   {control_url}")
-            logger.warning("=" * 60)
-
-            if not wait_for_completion:
-                logger.warning("⚠️ 不等待验证完成，立即返回给前端处理")
-                return 'need_captcha'
-
-            # 等待用户完成验证
-            logger.warning("⏳ 等待用户通过网页完成验证...")
-            max_wait_time = 90
-            check_interval = 1
-            elapsed_time = 0
-
             while elapsed_time < max_wait_time:
                 await asyncio.sleep(check_interval)
                 elapsed_time += check_interval
 
-                if captcha_controller.is_completed(self.user_id):
-                    logger.success("✅ 远程验证成功！")
-                    await captcha_controller.close_session(self.user_id)
+                # 检测验证码滑块是否依然存在
+                has_slider, _ = await self.detect_slider(page)
+                if not has_slider:
+                    logger.success("✅ 检测到滑块已消失，人工验证通过！")
                     return True
 
                 if elapsed_time % 10 == 0:
-                    logger.info(f"⏳ 仍在等待...已等待 {elapsed_time} 秒")
+                    logger.info(f"⏳ 仍在等待人工操作... 已等待 {elapsed_time} 秒，请尽快在浏览器完成拖动")
 
-            logger.error(f"❌ 远程验证超时（{max_wait_time}秒）")
-            await captcha_controller.close_session(self.user_id)
+            logger.error(f"❌ 等待人工验证超时（{max_wait_time}秒）")
             return False
 
         except Exception as e:
-            logger.error(f"远程控制启动失败: {e}")
+            logger.error(f"❌ 人工验证等待过程异常: {str(e)}")
             return False
 
     def _get_server_ip(self) -> str:
