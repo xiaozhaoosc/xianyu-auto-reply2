@@ -334,14 +334,13 @@ class SliderHandler:
             await asyncio.sleep(random.uniform(0.05, 0.1))
 
             # 模拟人类化滑动轨迹
-            steps = random.randint(10, 15)
-            for i in range(steps):
-                progress = (i + 1) / steps
-                current_distance = slide_distance * progress
-                y_jitter = random.uniform(-2, 2)
+            from common.services.captcha.trajectory import TrajectoryGenerator
+            generator = TrajectoryGenerator(user_id=self.user_id)
+            trajectory = generator.generate_human_trajectory(slide_distance)
 
-                await page.mouse.move(start_x + current_distance, start_y + y_jitter)
-                await asyncio.sleep(random.uniform(0.005, 0.015))
+            for x_offset, y_offset, delay in trajectory:
+                await page.mouse.move(start_x + x_offset, start_y + y_offset)
+                await asyncio.sleep(delay)
 
             # 停顿观察
             await asyncio.sleep(random.uniform(0.2, 0.3))
