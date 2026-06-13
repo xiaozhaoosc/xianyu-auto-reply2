@@ -308,12 +308,26 @@ class SliderHandler:
     async def _perform_slide(self, page: Page, button_box: dict) -> bool:
         """执行滑动操作"""
         try:
-            # 计算滑动距离（25-35%）
-            estimated_track_width = 300
-            scratch_ratio = random.uniform(0.25, 0.35)
-            slide_distance = estimated_track_width * scratch_ratio
+            # 刮刮乐需要滑到100%才能完全显示验证码
+            # 尝试获取实际滑轨宽度
+            estimated_track_width = await page.evaluate("""
+                () => {
+                    const container = document.querySelector('.scratch-captcha-slider') ||
+                                     document.querySelector('#nocaptcha') ||
+                                     document.querySelector('[class*="scratch-captcha"]');
+                    if (container) {
+                        const rect = container.getBoundingClientRect();
+                        return rect.width;
+                    }
+                    return 300;
+                }
+            """)
+            # 滑动距离：滑轨宽度减去按钮宽度（约30px），再加少量随机偏移
+            button_width = button_box.get('width', 30)
+            scratch_ratio = random.uniform(0.92, 1.0)
+            slide_distance = (estimated_track_width - button_width) * scratch_ratio
 
-            logger.warning(f"🎨 刮刮乐模式：计划滑动{scratch_ratio*100:.1f}%距离 ({slide_distance:.2f}px)")
+            logger.warning(f"🎨 刮刮乐模式：计划滑动{scratch_ratio*100:.1f}%距离 ({slide_distance:.2f}px)，滑轨宽度={estimated_track_width}px")
 
             start_x = button_box['x'] + button_box['width'] / 2
             start_y = button_box['y'] + button_box['height'] / 2
