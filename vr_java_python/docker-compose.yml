@@ -37,7 +37,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Java 平台服务
+  # 主系统 REST API 服务
   platform-server:
     build:
       context: ./java-platform
@@ -65,7 +65,7 @@ services:
   platform-scheduler:
     build:
       context: ./java-platform
-      dockerfile: ../deployment/docker/Dockerfile.java
+      dockerfile: ../deployment/docker/Dockerfile.scheduler
     container_name: xianyu-platform-scheduler
     restart: unless-stopped
     ports:
@@ -85,6 +85,67 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # 返佣系统服务
+  platform-promotion:
+    build:
+      context: ./java-platform
+      dockerfile: ../deployment/docker/Dockerfile.promotion
+    container_name: xianyu-platform-promotion
+    restart: unless-stopped
+    ports:
+      - "8092:8092"
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-xianyu}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-xianyu123}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TZ=Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # gRPC 通信服务
+  platform-grpc:
+    build:
+      context: ./java-platform
+      dockerfile: ../deployment/docker/Dockerfile.grpc
+    container_name: xianyu-platform-grpc
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-xianyu}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-xianyu123}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TZ=Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # 前端 Nginx
+  frontend-nginx:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.frontend
+    container_name: xianyu-frontend
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    depends_on:
+      - platform-server
+      - platform-promotion
 
 volumes:
   mysql_data:
