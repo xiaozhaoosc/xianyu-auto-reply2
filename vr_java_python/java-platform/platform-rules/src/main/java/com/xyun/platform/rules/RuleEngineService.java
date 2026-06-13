@@ -22,13 +22,16 @@ public class RuleEngineService {
      * 执行发货检查规则
      */
     public DeliveryCheckFact checkDelivery(DeliveryCheckFact fact) {
-        try (KieSession session = kieContainer.newKieSession()) {
+        KieSession session = kieContainer.newKieSession();
+        try {
             session.insert(fact);
             session.fireAllRules();
             return fact;
         } catch (Exception e) {
             log.error("发货规则执行失败", e);
             return fact;
+        } finally {
+            session.dispose();
         }
     }
 
@@ -36,13 +39,16 @@ public class RuleEngineService {
      * 执行回复优先级规则
      */
     public ReplyCheckFact checkReply(ReplyCheckFact fact) {
-        try (KieSession session = kieContainer.newKieSession()) {
+        KieSession session = kieContainer.newKieSession();
+        try {
             session.insert(fact);
             session.fireAllRules();
             return fact;
         } catch (Exception e) {
             log.error("回复规则执行失败", e);
             return fact;
+        } finally {
+            session.dispose();
         }
     }
 }

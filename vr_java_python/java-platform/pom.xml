@@ -157,6 +157,8 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                    <!-- 非启动模块跳过 repackage -->
+                    <skip>true</skip>
                 </configuration>
             </plugin>
         </plugins>

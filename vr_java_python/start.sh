@@ -9,11 +9,11 @@ mvn clean package -DskipTests -q || { echo "编译失败！"; exit 1; }
 
 echo "[2/3] 启动后端服务..."
 mkdir -p ../logs
-nohup java -jar platform-server/target/platform-server-2.0.0-SNAPSHOT.jar > ../logs/server.log 2>&1 &
+nohup java -jar platform-server/target/platform-server-2.0.0-SNAPSHOT-exec.jar > ../logs/server.log 2>&1 &
 sleep 5
-nohup java -jar platform-scheduler/target/platform-scheduler-2.0.0-SNAPSHOT.jar > ../logs/scheduler.log 2>&1 &
+nohup java -jar platform-scheduler/target/platform-scheduler-2.0.0-SNAPSHOT-exec.jar > ../logs/scheduler.log 2>&1 &
 sleep 3
-nohup java -jar platform-promotion/target/platform-promotion-2.0.0-SNAPSHOT.jar > ../logs/promotion.log 2>&1 &
+nohup java -jar platform-promotion/target/platform-promotion-2.0.0-SNAPSHOT-exec.jar > ../logs/promotion.log 2>&1 &
 
 echo "[3/3] 启动前端..."
 cd ../frontend

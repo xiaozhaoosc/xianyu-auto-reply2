@@ -1,5 +1,6 @@
 package com.xyun.platform.server.rule;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xyun.platform.common.entity.XyDefaultReply;
 import com.xyun.platform.common.entity.XyDeliveryBlockRule;
@@ -35,8 +36,9 @@ public class RuleService {
         );
     }
 
-    /** 创建关键词规则 */
+    /** 创建关键词规则，自动填充当前用户为 owner */
     public XyKeywordRule createKeywordRule(XyKeywordRule rule) {
+        rule.setOwnerId(StpUtil.getLoginIdAsLong());
         keywordRuleMapper.insert(rule);
         return rule;
     }

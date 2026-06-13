@@ -1,5 +1,6 @@
 package com.xyun.platform.server.card;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xyun.platform.common.entity.XyCard;
 import com.xyun.platform.common.entity.XyCardItemRelation;
@@ -40,8 +41,9 @@ public class CardService {
         return card;
     }
 
-    /** 创建卡券 */
+    /** 创建卡券，自动填充当前用户ID */
     public XyCard createCard(XyCard card) {
+        card.setUserId(StpUtil.getLoginIdAsLong());
         cardMapper.insert(card);
         return card;
     }

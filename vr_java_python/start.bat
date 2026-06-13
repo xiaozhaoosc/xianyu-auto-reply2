@@ -14,11 +14,11 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo [2/3] 启动后端服务...
-start "Platform Server" java -jar platform-server/target/platform-server-2.0.0-SNAPSHOT.jar
+start "Platform Server" java -jar platform-server/target/platform-server-2.0.0-SNAPSHOT-exec.jar
 timeout /t 5 /nobreak >nul
-start "Platform Scheduler" java -jar platform-scheduler/target/platform-scheduler-2.0.0-SNAPSHOT.jar
+start "Platform Scheduler" java -jar platform-scheduler/target/platform-scheduler-2.0.0-SNAPSHOT-exec.jar
 timeout /t 3 /nobreak >nul
-start "Platform Promotion" java -jar platform-promotion/target/platform-promotion-2.0.0-SNAPSHOT.jar
+start "Platform Promotion" java -jar platform-promotion/target/platform-promotion-2.0.0-SNAPSHOT-exec.jar
 timeout /t 3 /nobreak >nul
 
 echo [3/3] 启动前端...

@@ -1,5 +1,6 @@
 package com.xyun.platform.server.account;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xyun.platform.common.entity.XyAccount;
@@ -41,8 +42,9 @@ public class AccountService {
         return account;
     }
 
-    /** 添加账号 */
+    /** 添加账号，自动填充当前用户为 owner */
     public XyAccount addAccount(XyAccount account) {
+        account.setOwnerId(StpUtil.getLoginIdAsLong());
         accountMapper.insert(account);
         return account;
     }
