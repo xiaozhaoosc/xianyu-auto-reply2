@@ -101,8 +101,17 @@ class BrowserManager:
             os.makedirs(self._user_data_dir, exist_ok=True)
             logger.info(f"使用持久化数据目录: {self._user_data_dir}")
 
+            # 引入防反爬脚本与随机特征配置
+            from common.services.captcha.browser_features import get_random_browser_features, get_stealth_script
+            browser_features = get_random_browser_features()
+
             # 构建浏览器参数
             browser_args = self.DEFAULT_BROWSER_ARGS.copy()
+            browser_args.append('--disable-blink-features=AutomationControlled')
+            browser_args.append(f"--window-size={browser_features['window_size']}")
+            browser_args.append(f"--lang={browser_features['lang']}")
+            browser_args.append(f"--accept-lang={browser_features['accept_lang']}")
+
             if os.getenv('DOCKER_ENV') == 'true':
                 browser_args.extend(self.DOCKER_BROWSER_ARGS)
 
@@ -113,9 +122,13 @@ class BrowserManager:
             launch_kwargs = dict(
                 headless=headless,
                 args=browser_args,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={'width': 1280, 'height': 720},
-                locale='zh-CN',
+                user_agent=browser_features['user_agent'],
+                viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                locale=browser_features['locale'],
+                ignore_https_errors=True,
+                extra_http_headers={
+                    'Accept-Language': browser_features['accept_lang']
+                }
             )
             if chromium_path:
                 launch_kwargs["executable_path"] = chromium_path
@@ -123,6 +136,10 @@ class BrowserManager:
                 self._user_data_dir,
                 **launch_kwargs,
             )
+
+            # 在 Context 级别全局注入防检测（Stealth）脚本，防止 iframe 与新页面特征分裂
+            await self.context.add_init_script(get_stealth_script(browser_features))
+            logger.info("已在 Context 注入防检测（Stealth）脚本")
 
             self.browser = self.context.browser
             logger.info("浏览器启动成功（持久化上下文已创建）...")
