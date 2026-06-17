@@ -14,6 +14,7 @@ import time
 import os
 import sys
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from collections import defaultdict
 from typing import Dict, Optional
 from loguru import logger
@@ -320,7 +321,7 @@ class XianyuAsync:
         try:
             import aiohttp
             timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with await create_aiohttp_session(timeout=timeout) as session:
                 async with session.get(api_url) as resp:
                     if resp.status != 200:
                         logger.warning(
@@ -1633,7 +1634,7 @@ class XianyuAsync:
                     full_image_url = f"{backend_web_url}/{image_url.lstrip('/')}"
                     
                     try:
-                        async with aiohttp.ClientSession() as http_session:
+                        async with await create_aiohttp_session() as http_session:
                             async with http_session.get(full_image_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                                 if response.status == 200:
                                     # 下载图片到临时文件
@@ -2039,7 +2040,7 @@ class XianyuAsync:
                 'Referer': 'https://www.goofish.com/',
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.get(image_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         image_data = await response.read()

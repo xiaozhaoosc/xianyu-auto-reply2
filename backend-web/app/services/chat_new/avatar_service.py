@@ -15,6 +15,7 @@ import time
 from typing import Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -190,7 +191,7 @@ async def _fetch_user_info_from_api(
             "cookie": cookies_str.replace("\n", "").replace("\r", ""),
         }
 
-        async with aiohttp.ClientSession() as http_session:
+        async with await create_aiohttp_session() as http_session:
             async with http_session.post(
                 USER_QUERY_URL,
                 params=params,

@@ -66,6 +66,22 @@ class GeetestLib:
         self.captcha_id = captcha_id or GeetestConfig.CAPTCHA_ID
         self.private_key = private_key or GeetestConfig.PRIVATE_KEY
         self.result = GeetestResult()
+        self._proxy: Optional[str] = None
+        self._proxy_loaded = False
+    
+    async def _get_proxy(self) -> Optional[str]:
+        """懒加载代理配置（从系统设置读取，带缓存）"""
+        if not self._proxy_loaded:
+            try:
+                from common.utils.proxy_connector import get_httpx_proxy
+                self._proxy = await get_httpx_proxy()
+                if self._proxy:
+                    logger.info(f"极验SDK代理已加载: {self._proxy}")
+            except Exception as e:
+                logger.debug(f"极验SDK加载代理失败（直连）: {e}")
+                self._proxy = None
+            self._proxy_loaded = True
+        return self._proxy
     
     def _md5_encode(self, value: str) -> str:
         """MD5加密"""
@@ -95,7 +111,8 @@ class GeetestLib:
         url = f"{GeetestConfig.API_URL}{GeetestConfig.REGISTER_URL}"
         
         try:
-            async with httpx.AsyncClient(timeout=GeetestConfig.TIMEOUT) as client:
+            proxy = await self._get_proxy()
+            async with httpx.AsyncClient(timeout=GeetestConfig.TIMEOUT, proxy=proxy) as client:
                 response = await client.get(url, params=params)
                 response.raise_for_status()
                 
@@ -199,7 +216,8 @@ class GeetestLib:
         url = f"{GeetestConfig.API_URL}{GeetestConfig.VALIDATE_URL}"
         
         try:
-            async with httpx.AsyncClient(timeout=GeetestConfig.TIMEOUT) as client:
+            proxy = await self._get_proxy()
+            async with httpx.AsyncClient(timeout=GeetestConfig.TIMEOUT, proxy=proxy) as client:
                 response = await client.post(url, data=params)
                 response.raise_for_status()
                 

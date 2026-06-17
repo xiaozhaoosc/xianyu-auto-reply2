@@ -17,6 +17,7 @@ from typing import Optional, Dict, Any
 
 import aiohttp
 from loguru import logger
+from common.utils.proxy_connector import create_aiohttp_session
 
 from common.utils.xianyu_utils import generate_sign
 
@@ -110,7 +111,7 @@ class RateService:
             url = "https://h5api.m.goofish.com/h5/mtop.taobao.idle.rate.create/4.0/"
             
             timeout = aiohttp.ClientTimeout(total=20)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with await create_aiohttp_session(timeout=timeout) as session:
                 async with session.post(url, params=params, headers=headers, data={"data": data_val}) as response:
                     result = await response.json()
                     
@@ -249,7 +250,7 @@ async def fetch_merchant_rate_list(cookie_string: str, account_id: str = None, p
             url = "https://h5api.m.goofish.com/h5/mtop.taobao.idle.merchant.rate.list/1.0/"
             
             timeout_cfg = aiohttp.ClientTimeout(total=20)
-            async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+            async with await create_aiohttp_session(timeout=timeout_cfg) as session:
                 async with session.post(url, params=params, headers=headers, data={"data": data_val}) as response:
                     result = await response.json()
                     
@@ -390,7 +391,7 @@ async def get_rate_feedback_content(account_id: str) -> Optional[str]:
                 
                 logger.info(f"账号 {account_id} 从API获取评价内容: {config.api_url}")
                 timeout = aiohttp.ClientTimeout(total=30)
-                async with aiohttp.ClientSession(timeout=timeout) as http_session:
+                async with await create_aiohttp_session(timeout=timeout) as http_session:
                     async with http_session.get(config.api_url) as response:
                         if response.status == 200:
                             content = await response.text()

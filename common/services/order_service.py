@@ -880,6 +880,7 @@ class OrderService:
         import json
         import time
         import aiohttp
+        from common.utils.proxy_connector import create_aiohttp_session
         from common.utils.xianyu_utils import trans_cookies, generate_sign
         from common.utils.cookie_refresh import (
             is_token_expired_error, handle_token_expired_response,
@@ -925,7 +926,7 @@ class OrderService:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36',
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(
                 'https://h5api.m.goofish.com/h5/mtop.taobao.idle.trade.merchant.sold.get/1.0/',
                 params=params,
@@ -1385,7 +1386,7 @@ class OrderDetailService:
                 'cookie': self.cookies_str,
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     'https://h5api.m.goofish.com/h5/mtop.idle.web.trade.order.detail/1.0/',
                     params=params,
@@ -1792,7 +1793,7 @@ class OrderStatusChecker:
                 'cookie': self.cookies_str,
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     'https://h5api.m.goofish.com/h5/mtop.idle.web.trade.order.detail/1.0/',
                     params=params,

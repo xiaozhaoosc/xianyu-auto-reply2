@@ -12,6 +12,7 @@ import json
 import time
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 from common.utils.xianyu_utils import generate_sign, trans_cookies
@@ -108,7 +109,7 @@ async def delete_item_from_xianyu(
             "cookie": cookies_str.replace("\n", "").replace("\r", ""),
         }
 
-        async with aiohttp.ClientSession() as http_session:
+        async with await create_aiohttp_session() as http_session:
             async with http_session.post(
                 DELETE_ITEM_URL,
                 params=params,

@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict, Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +53,7 @@ class HTTPClient:
     async def _get_session(self) -> aiohttp.ClientSession:
         """获取或创建session"""
         if self._session is None or self._session.closed:
-            connector = aiohttp.TCPConnector(
-                limit=100,  # 最大连接数
-                limit_per_host=30,  # 每个主机最大连接数
-                ttl_dns_cache=300,  # DNS缓存时间
-            )
-            self._session = aiohttp.ClientSession(
-                connector=connector,
+            self._session = await create_aiohttp_session(
                 timeout=self.timeout,
             )
         return self._session

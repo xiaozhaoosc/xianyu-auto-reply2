@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 
 from common.utils.xianyu_utils import generate_sign, trans_cookies
 
@@ -45,7 +46,7 @@ async def official_blacklist_request(cookies_str: str, session_id: str, action: 
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
     }
     url = f"https://h5api.m.goofish.com/h5/{api}/{version}/"
-    async with aiohttp.ClientSession() as session:
+    async with await create_aiohttp_session() as session:
         async with session.post(
             url, params=params, data={"data": data_val}, headers=headers,
             timeout=aiohttp.ClientTimeout(total=20),

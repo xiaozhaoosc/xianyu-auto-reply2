@@ -54,6 +54,7 @@ class ItemInfoManager:
         """
         if not self.session:
             import aiohttp
+            from common.utils.proxy_connector import create_aiohttp_session
             headers = {
                 'accept': 'application/json',
                 'accept-encoding': 'gzip, deflate, br',  # 排除zstd，aiohttp不支持
@@ -66,11 +67,9 @@ class ItemInfoManager:
                 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'cookie': self.cookies_str
             }
-            connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            self.session = aiohttp.ClientSession(
+            self.session = await create_aiohttp_session(
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
-                connector=connector
             )
             self._own_session = True
     

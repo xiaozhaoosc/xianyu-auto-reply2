@@ -19,6 +19,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 from sqlalchemy import text
 
@@ -109,7 +110,7 @@ class GoofishImClient:
                 "Accept-Encoding": "gzip, deflate, br, zstd",
                 "Accept-Language": "zh-CN,zh;q=0.9",
             }
-            self._session = aiohttp.ClientSession()
+            self._session = await create_aiohttp_session()
             # 超时策略（应对 wss:// 网络抖动）：
             # - total=None:      WebSocket 是长连接，原 total=30 会强制 30 秒后断开整个会话
             # - connect=30:      TCP + SSL/TLS 握手 + 连接池等待的超时（关键！wss 的 TLS 握手由此覆盖）
@@ -651,7 +652,7 @@ class GoofishImClient:
                 ),
             }
 
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     TOKEN_API_URL,
                     params=params,

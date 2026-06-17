@@ -12,6 +12,7 @@ import json
 import time
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 from app.services.xianyu.delivery_rules.base_rule import (
@@ -163,7 +164,7 @@ class BuyerCreditRule(BaseDeliveryRule):
 
             api_url = "https://h5api.m.goofish.com/h5/mtop.idle.web.trade.rate.list/1.0/"
 
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     api_url,
                     params=params,

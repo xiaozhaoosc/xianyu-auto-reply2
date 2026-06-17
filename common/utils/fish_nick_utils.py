@@ -13,6 +13,7 @@ import time
 from typing import Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 APP_KEY = "34839810"
@@ -104,7 +105,7 @@ async def _fetch_fish_nick(
             "cookie": cookies_str.replace("\n", "").replace("\r", ""),
         }
 
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(
                 USER_QUERY_URL,
                 params=params,

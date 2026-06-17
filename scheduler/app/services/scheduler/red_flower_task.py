@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 from sqlalchemy import select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -351,7 +352,7 @@ class RedFlowerTask:
             retry_tag = "[令牌过期重试] " if is_retry else ""
 
             # 发送请求
-            async with aiohttp.ClientSession() as http_session:
+            async with await create_aiohttp_session() as http_session:
                 async with http_session.post(
                     "https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.red.flower/1.0/",
                     params=params,

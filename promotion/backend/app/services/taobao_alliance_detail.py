@@ -11,6 +11,7 @@ import json
 import time
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 from app.services.taobao_alliance_service import (
@@ -63,7 +64,7 @@ async def get_product_detail(
     params = _build_detail_params(item_id, app_key, app_secret)
 
     try:
-        async with aiohttp.ClientSession() as client:
+        async with await create_aiohttp_session() as client:
             async with client.get(TAOBAO_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 data = await resp.json(content_type=None)
                 logger.info(f"商品详情API返回: {data}")
@@ -209,7 +210,7 @@ async def create_tpwd(
     params = _build_tpwd_params(text, url, logo, app_key, app_secret)
 
     try:
-        async with aiohttp.ClientSession() as client:
+        async with await create_aiohttp_session() as client:
             async with client.get(TAOBAO_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 data = await resp.json(content_type=None)
                 logger.info(f"淘口令生成API返回: {data}")
@@ -310,7 +311,7 @@ async def create_short_url(
     params = _build_short_url_params(url=url, app_key=app_key, app_secret=app_secret)
 
     try:
-        async with aiohttp.ClientSession() as client:
+        async with await create_aiohttp_session() as client:
             async with client.get(TAOBAO_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 data = await resp.json(content_type=None)
                 logger.info(f"短连接生成API返回: {data}")

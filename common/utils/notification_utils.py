@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 
@@ -74,7 +75,7 @@ async def send_dingtalk_notification(config_data: Dict[str, Any], message: str) 
             }
         }
 
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(webhook_url, json=data, timeout=10) as response:
                 if response.status == 200:
                     logger.info("📱 钉钉通知发送成功")
@@ -127,7 +128,7 @@ async def send_feishu_notification(config_data: Dict[str, Any], message: str) ->
         if sign:
             data["sign"] = sign
 
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(webhook_url, json=data, timeout=10) as response:
                 if response.status == 200:
                     response_text = await response.text()
@@ -180,7 +181,7 @@ async def send_bark_notification(config_data: Dict[str, Any], message: str) -> b
         if url:
             data["url"] = url
 
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(api_url, json=data, timeout=10) as response:
                 if response.status == 200:
                     response_text = await response.text()
@@ -429,7 +430,7 @@ async def send_webhook_notification(config_data: Dict[str, Any], message: str) -
             'source': 'xianyu-auto-reply'
         }
 
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             if http_method == 'POST':
                 async with session.post(webhook_url, json=data, headers=headers, timeout=10) as response:
                     if response.status == 200:
@@ -462,7 +463,7 @@ async def send_wechat_notification(config_data: Dict[str, Any], message: str) ->
             "text": {"content": message}
         }
 
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(webhook_url, json=data, timeout=10) as response:
                 if response.status == 200:
                     logger.info("📱 微信通知发送成功")
@@ -492,7 +493,7 @@ async def send_telegram_notification(config_data: Dict[str, Any], message: str) 
             'parse_mode': 'HTML'
         }
 
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(api_url, json=data, timeout=10) as response:
                 if response.status == 200:
                     logger.info("📱 Telegram通知发送成功")

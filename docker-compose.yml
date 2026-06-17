@@ -13,6 +13,10 @@ services:
       dockerfile: backend-web/Dockerfile
     container_name: xianyu-backend-web
     restart: unless-stopped
+    command: >
+      bash -c "Xvfb :99 -screen 0 1920x1080x24 -ac &
+      sleep 2
+      && python backend-web/main.py"
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - MYSQL_HOST=${MYSQL_HOST:-dev-mysql}
@@ -34,6 +38,7 @@ services:
       - STATIC_DIR=/app/static
       - BACKUP_DIR=/app/backups
       - BROWSER_HEADLESS=${BROWSER_HEADLESS:-true}
+      - DISPLAY=:99
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SQL_ECHO=${SQL_ECHO:-true}
       - TZ=${TZ:-Asia/Shanghai}
@@ -60,6 +65,10 @@ services:
       dockerfile: websocket/Dockerfile
     container_name: xianyu-websocket
     restart: unless-stopped
+    command: >
+      bash -c "Xvfb :99 -screen 0 1920x1080x24 -ac &
+      sleep 2
+      && python websocket/main.py"
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - MYSQL_HOST=${MYSQL_HOST:-dev-mysql}
@@ -74,6 +83,7 @@ services:
       - WEBSOCKET_PORT=${WEBSOCKET_PORT:-8090}
       - MAX_CAPTCHA_CONCURRENT=3
       - BROWSER_HEADLESS=${BROWSER_HEADLESS:-true}
+      - DISPLAY=:99
       - BACKEND_WEB_SERVICE_URL=http://backend-web:8089
       - STATIC_DIR=/app/static
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

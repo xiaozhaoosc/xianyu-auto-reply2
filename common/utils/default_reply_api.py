@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from loguru import logger
+from common.utils.proxy_connector import create_aiohttp_session
 
 # API 默认超时时间（秒）
 DEFAULT_API_TIMEOUT = 80
@@ -169,7 +170,7 @@ async def call_reply_api(
 
     try:
         client_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        async with await create_aiohttp_session(timeout=client_timeout) as session:
             # 禁止自动跟随重定向：防止外部域名通过 30x 跳转到内网/回环地址
             # （如云元数据 169.254.169.254）绕过保存时的 SSRF 地址校验。
             async with session.post(

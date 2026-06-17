@@ -14,6 +14,7 @@ from typing import Optional
 import aiohttp
 from loguru import logger
 from PIL import Image
+from common.utils.proxy_connector import create_aiohttp_session
 
 
 class ImageUploader:
@@ -27,11 +28,8 @@ class ImageUploader:
     async def create_session(self):
         """创建HTTP会话"""
         if not self.session:
-            connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            timeout = aiohttp.ClientTimeout(total=30)
-            self.session = aiohttp.ClientSession(
-                connector=connector,
-                timeout=timeout,
+            self.session = await create_aiohttp_session(
+                timeout=aiohttp.ClientTimeout(total=30),
                 headers={
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }

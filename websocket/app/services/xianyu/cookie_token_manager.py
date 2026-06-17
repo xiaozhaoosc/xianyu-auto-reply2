@@ -15,6 +15,7 @@ import json
 import random
 import time
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 from common.db.session import async_session_maker
@@ -771,7 +772,7 @@ class CookieTokenManager:
             logger.info(f"【{self.cookie_id}】发起Token刷新API请求: {api_url}")
             request_start_time = time.time()
             
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     api_url,
                     params=params,

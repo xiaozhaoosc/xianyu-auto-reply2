@@ -14,6 +14,7 @@ import json
 import time
 import hashlib
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 from app.services.xianyu.delivery_utils import (
@@ -618,7 +619,7 @@ class AutoDeliveryHandler:
                 'cookie': self.cookies_str.replace('\n', '').replace('\r', '') if self.cookies_str else '',
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     'https://h5api.m.goofish.com/h5/mtop.idle.web.trade.order.detail/1.0/',
                     params=params,
@@ -2521,7 +2522,7 @@ class AutoDeliveryHandler:
             timeout_obj = aiohttp.ClientTimeout(total=timeout)
 
             # 使用临时的纯净 ClientSession，避免共用闲鱼 session 导致敏感 Cookie 泄露或 Headers 冲突（如 Content-Type 冲突返回 415）
-            async with aiohttp.ClientSession() as http_session:
+            async with await create_aiohttp_session() as http_session:
                 if method == 'GET':
                     async with http_session.get(url, headers=headers, params=params, timeout=timeout_obj) as response:
                         status_code = response.status
@@ -2781,7 +2782,7 @@ class AutoDeliveryHandler:
 
             api_url = 'https://h5api.m.goofish.com/h5/mtop.idle.web.trade.rate.list/1.0/'
 
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     api_url,
                     params=params,
@@ -3121,7 +3122,7 @@ class AutoDeliveryHandler:
 
             api_url = 'https://h5api.m.goofish.com/h5/mtop.taobao.idle.trade.merchant.close.by.seller/2.0/'
 
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     api_url,
                     params=params,

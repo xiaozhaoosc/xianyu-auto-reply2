@@ -24,6 +24,7 @@ from typing import Any
 
 import aiohttp
 from loguru import logger
+from common.utils.proxy_connector import create_aiohttp_session
 
 from common.utils.xianyu_utils import trans_cookies
 
@@ -476,7 +477,7 @@ class CookieRenewApiService:
                 f"&pageTraceId={page_trace_id}"
             )
 
-            async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as http_session:
+            async with await create_aiohttp_session(cookie_jar=aiohttp.DummyCookieJar()) as http_session:
                 async with http_session.post(
                     _HAS_LOGIN_URL_WEB,
                     params=params,
@@ -579,7 +580,7 @@ class CookieRenewApiService:
         }
 
         try:
-            async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as http_session:
+            async with await create_aiohttp_session(cookie_jar=aiohttp.DummyCookieJar()) as http_session:
                 async with http_session.post(
                     _HAS_LOGIN_URL,
                     params=params,
@@ -686,7 +687,7 @@ class CookieRenewApiService:
         }
 
         try:
-            async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as http_session:
+            async with await create_aiohttp_session(cookie_jar=aiohttp.DummyCookieJar()) as http_session:
                 async with http_session.post(
                     _SET_LOGIN_SETTINGS_URL,
                     params=params,

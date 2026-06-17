@@ -15,6 +15,7 @@ import time
 from typing import Any, Dict
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 from common.utils.xianyu_utils import generate_sign, trans_cookies
@@ -106,7 +107,7 @@ async def fetch_seller_summary(
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(
                 SELLER_SUMMARY_URL,
                 params=params,
@@ -234,7 +235,7 @@ async def fetch_browse_summary(
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with await create_aiohttp_session() as session:
             async with session.post(
                 BROWSE_SUMMARY_URL,
                 params=params,

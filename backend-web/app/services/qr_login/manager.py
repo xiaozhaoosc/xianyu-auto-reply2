@@ -98,6 +98,17 @@ class QRLoginManager:
         """将Cookie字典转换为字符串"""
         return "; ".join([f"{k}={v}" for k, v in cookies.items()])
 
+    async def _ensure_proxy(self):
+        """懒加载代理配置（从系统设置读取，带缓存）"""
+        try:
+            from common.utils.proxy_connector import get_httpx_proxy
+            self.proxy = await get_httpx_proxy()
+            if self.proxy:
+                logger.info(f"QR登录代理已加载: {self.proxy}")
+        except Exception as e:
+            logger.debug(f"QR登录加载代理失败（直连）: {e}")
+            self.proxy = None
+
     async def _get_mh5tk(self, session: QRLoginSession) -> Dict[str, str]:
         """获取m_h5_tk和m_h5_tk_enc"""
         data = {"bizScene": "home"}
@@ -203,6 +214,7 @@ class QRLoginManager:
     async def generate_qr_code(self) -> Dict[str, Any]:
         """生成二维码"""
         try:
+            await self._ensure_proxy()
             session_id = str(uuid.uuid4())
             session = QRLoginSession(session_id)
 

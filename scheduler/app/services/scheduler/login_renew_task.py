@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -245,7 +246,7 @@ class LoginRenewTaskService:
         }
         
         try:
-            async with aiohttp.ClientSession() as http_session:
+            async with await create_aiohttp_session() as http_session:
                 async with http_session.post(
                     'https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.loginuser.get/1.0/',
                     params=params,

@@ -131,6 +131,7 @@ async def close_account_notice(account_id: str, cookies_str: str, task_name: str
         return False, "账号Cookie为空"
 
     import aiohttp
+    from common.utils.proxy_connector import create_aiohttp_session
 
     try:
         cookies = trans_cookies(cookies_str)
@@ -171,7 +172,7 @@ async def close_account_notice(account_id: str, cookies_str: str, task_name: str
     url = f"https://h5api.m.goofish.com/h5/{CLOSE_NOTICE_API}/1.0/"
 
     try:
-        async with aiohttp.ClientSession() as http_session:
+        async with await create_aiohttp_session() as http_session:
             async with http_session.post(
                 url,
                 params=params,

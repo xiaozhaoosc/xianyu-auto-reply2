@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -121,7 +122,7 @@ async def get_api_card_content(
             params = _build_api_params(params, context or {})
 
         timeout_obj = aiohttp.ClientTimeout(total=timeout)
-        async with aiohttp.ClientSession() as http_session:
+        async with await create_aiohttp_session() as http_session:
             if method == 'GET':
                 async with http_session.get(url, headers=headers, params=params, timeout=timeout_obj) as response:
                     status_code = response.status

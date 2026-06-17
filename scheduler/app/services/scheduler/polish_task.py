@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -340,7 +341,7 @@ class PolishTaskService:
             }
             
             # 发送请求
-            async with aiohttp.ClientSession() as session:
+            async with await create_aiohttp_session() as session:
                 async with session.post(
                     'https://h5api.m.goofish.com/h5/mtop.taobao.idle.item.polish/1.0/',
                     params=params,

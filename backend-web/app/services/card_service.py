@@ -956,7 +956,15 @@ class CardService:
             if not url:
                 return None
             
-            async with httpx.AsyncClient(timeout=30) as client:
+            # 获取代理配置
+            proxy = None
+            try:
+                from common.utils.proxy_connector import get_httpx_proxy
+                proxy = await get_httpx_proxy()
+            except Exception:
+                pass
+            
+            async with httpx.AsyncClient(timeout=30, proxy=proxy) as client:
                 if method == "GET":
                     response = await client.get(url, headers=headers, params=params)
                 else:

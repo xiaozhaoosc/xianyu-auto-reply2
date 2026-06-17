@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import aiohttp
 from loguru import logger
+from common.utils.proxy_connector import create_aiohttp_session
 
 _REMOTE_IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _TEMP_UPLOAD_DIR = Path(tempfile.gettempdir()) / "xianyu_publish_images"
@@ -44,7 +45,7 @@ def _guess_image_suffix(url: str, content_type: str) -> str:
 
 async def download_remote_image(url: str) -> str:
     """下载远程图片到公共临时目录并返回本地路径。"""
-    async with aiohttp.ClientSession(timeout=_REMOTE_IMAGE_TIMEOUT) as session:
+    async with await create_aiohttp_session(timeout=_REMOTE_IMAGE_TIMEOUT) as session:
         async with session.get(url) as response:
             response.raise_for_status()
             content = await response.read()

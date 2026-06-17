@@ -13,6 +13,7 @@ import json
 import time
 
 import aiohttp
+from common.utils.proxy_connector import create_aiohttp_session
 from loguru import logger
 
 
@@ -284,7 +285,7 @@ async def search_products(
     logger.info(f"淘宝开放平台请求参数: {log_params}")
 
     try:
-        async with aiohttp.ClientSession() as http_session:
+        async with await create_aiohttp_session() as http_session:
             async with http_session.get(
                 TAOBAO_API_URL,
                 params=params,

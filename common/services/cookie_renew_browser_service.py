@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 from loguru import logger
+from common.utils.proxy_connector import create_aiohttp_session
 
 from common.core.config import get_settings
 from common.services.captcha.concurrency import (
@@ -229,7 +230,7 @@ class CookieRenewBrowserService:
             logger.info(f"{log_prefix} 委托 WebSocket 服务执行浏览器续期: {renew_url}")
 
             timeout = aiohttp.ClientTimeout(total=_BROWSER_RENEW_HTTP_TIMEOUT_SECONDS)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with await create_aiohttp_session(timeout=timeout) as session:
                 async with session.post(
                     renew_url,
                     json={"account_id": account_id, "cookies_str": cookies_str},
