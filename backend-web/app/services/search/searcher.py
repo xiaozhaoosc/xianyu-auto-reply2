@@ -156,10 +156,25 @@ class ItemSearchService:
         has_slider = False
         detected_selector = None
 
+        # 如果检测到确实被拦截了，但当前页面上还没检测到滑块，我们轮询等最多 5 秒钟让淘宝 JS 注入滑块
+        is_blocked_by_api = False
+        search_err_str = str(getattr(self, "_search_error", "") or "")
+        if "FAIL_SYS_USER_VALIDATE" in search_err_str or "舆情/验证码拦截" in search_err_str:
+            is_blocked_by_api = True
+
         if not v_url:
-            has_slider, detected_selector = await self.slider_handler.detect_slider(target_page)
+            # 轮询等滑块出现
+            for _ in range(10):  # 10 * 0.5s = 5s
+                has_slider, detected_selector = await self.slider_handler.detect_slider(target_page)
+                if has_slider:
+                    break
+                await asyncio.sleep(0.5)
+
             if not has_slider:
-                return True
+                if not is_blocked_by_api:
+                    return True
+                else:
+                    logger.warning("⚠️ API 被验证码拦截，但页面上等了 5 秒也没有渲染出滑块组件。")
         else:
             detected_selector = "FAIL_SYS_USER_VALIDATE (API URL)"
             has_slider = True
@@ -174,12 +189,14 @@ class ItemSearchService:
             logger.warning(f"🚀 发现拦截验证 URL，优先调用 token 流 run_slider_verification_with_fallback. URL: {v_url}")
             try:
                 from common.services.captcha.orchestrator import run_slider_verification_with_fallback
+                from app.core.config import get_settings
+                env_headless = get_settings().browser_headless
                 success, cookies, captcha_engine = await asyncio.to_thread(
                     run_slider_verification_with_fallback,
                     user_id=f"{self.user_id}",
                     url=v_url,
                     enable_learning=True,
-                    headless=False,
+                    headless=env_headless,
                     browser_timeout=25,
                     existing_cookies_str=self.cookie_value,
                 )
