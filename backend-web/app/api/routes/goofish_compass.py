@@ -90,7 +90,8 @@ async def search_goofish(
         service = GoofishCompassService(
             user_id=str(cookie.id),
             cookie_value=cookie.cookie,
-            config=config
+            config=config,
+            db_session=db
         )
         
         # 执行搜索

@@ -31,3 +31,12 @@
   - **全英文免乱码设计**: 将批处理中的注释及回显全部改为纯英文（ASCII），彻底避开了中文控制台（CP936/CP65001）转换时的解析破坏。
   - **一键幂等拉起**: 把 Docker 状态检测改为无副作用的 `docker compose up -d` 幂等调用，大幅优化批处理逻辑。
 
+## 📌 2026-06-18 — 商品采集与搜索滑块闭环与 Cookie 同步更新机制 (ADR-004)
+- **事件**: 解决了商品采集与搜索遭遇淘宝/闲鱼 H5 验证码滑块拦截时，由于无法提取更新后的 `x5sec` cookie 写入数据库与浏览器 context 导致无限拦截死循环的问题。
+- **架构决策**:
+  - **拦截 URL 捕获**: 在 API 响应拦截回调（`_on_search_response` 和 `_on_response`）中监控 `FAIL_SYS_USER_VALIDATE` 并在遇到错误时提取 `data.url` 中的验证码链接。
+  - **融合 Token 验证流**: 统一编写 `_handle_verification_and_sync_cookies`，拦截时优先调用 DrissionPage / Playwright 双端 fallback 验证接口 `run_slider_verification_with_fallback`，成功后获取 `x5sec` 相关的 cookies。
+  - **多端持久化同步**: 获取到最新的 `x5sec` 后，不仅同步更新到闲鱼账号（`XYAccount`）的数据库中，也覆盖写入当前的 Playwright 浏览器 context，从而让浏览器无需重新初始化或重启即可获得放行权限。
+  - **搜索重试逻辑**: 在发送搜索请求时引入 3 次重试循环，滑块通过且 cookie 同步后，在当前页面上重新提交搜索以成功获取数据。
+
+

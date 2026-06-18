@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -21,6 +21,76 @@ class GoofishCompassConfig:
     navigation_timeout_ms: int = 30000
     network_idle_timeout_ms: int = 15000
     detail_response_timeout_ms: int = 7000
+async def update_xy_account_cookie(
+    db_session: Any,
+    user_id: str,
+    old_cookie: str,
+    new_x5sec_cookies: dict
+) -> bool:
+    """
+    通用更新闲鱼账号 Cookie 逻辑。
+    通过 old_cookie 精确查找，或者通过 user_id (系统用户ID或账号ID) 兜底查找，
+    将提取的 x5sec 合并到旧的 Cookie 中并保存到数据库。
+    """
+    try:
+        from sqlalchemy import select
+        from common.models.xy_account import XYAccount
+        
+        # 1. 优先使用旧 Cookie 匹配到唯一的账号记录
+        account = None
+        if old_cookie and len(old_cookie) > 10:
+            stmt = select(XYAccount).where(XYAccount.cookie == old_cookie).limit(1)
+            res = await db_session.execute(stmt)
+            account = res.scalars().first()
+            
+        # 2. 如果没匹配到，根据 user_id 进行定位
+        if not account and user_id and str(user_id).isdigit():
+            uid_int = int(user_id)
+            # 尝试作为 XYAccount.id 查找
+            stmt = select(XYAccount).where(XYAccount.id == uid_int).limit(1)
+            res = await db_session.execute(stmt)
+            account = res.scalars().first()
+            
+            # 如果没找到，尝试作为 XYAccount.owner_id 且 active 查找
+            if not account:
+                stmt = select(XYAccount).where(XYAccount.owner_id == uid_int, XYAccount.status == "active").limit(1)
+                res = await db_session.execute(stmt)
+                account = res.scalars().first()
+                
+        if not account:
+            logger.warning(f"⚠️ 无法在数据库中定位到对应的闲鱼账号，跳过Cookie保存 (user_id={user_id})")
+            return False
+            
+        # 3. 将新获取的 x5sec 相关 Cookie 合并到原本的 Cookie 字符串中
+        # 解析旧 Cookie 字典
+        old_cookies_dict = {}
+        if account.cookie:
+            for pair in account.cookie.split(";"):
+                pair = pair.strip()
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    old_cookies_dict[k.strip()] = v.strip()
+                    
+        # 合并 x5sec 相关 Cookie
+        updated = False
+        for k, v in new_x5sec_cookies.items():
+            if old_cookies_dict.get(k) != v:
+                old_cookies_dict[k] = v
+                updated = True
+                
+        if updated or not account.cookie:
+            new_cookie_str = "; ".join([f"{k}={v}" for k, v in old_cookies_dict.items()])
+            account.cookie = new_cookie_str
+            await db_session.commit()
+            logger.success(f"✅ 成功将最新 x5sec 相关的 Cookie 同步保存到数据库中（账号 ID: {account.account_id}）")
+            return True
+            
+        logger.info(f"ℹ️ x5sec 没有发生变化，无需更新数据库 (账号 ID: {account.account_id})")
+        return False
+        
+    except Exception as e:
+        logger.error(f"❌ 更新闲鱼账号 Cookie 异常: {e}")
+        return False
 
 
 class GoofishCompassService:
@@ -72,10 +142,12 @@ class GoofishCompassService:
         user_id: str,
         cookie_value: str,
         config: GoofishCompassConfig | None = None,
+        db_session: Any = None,
     ) -> None:
         self.user_id = user_id
         self.cookie_value = cookie_value
         self.config = config or GoofishCompassConfig()
+        self.db_session = db_session
 
         self.browser = BrowserManager()
         self.parser = ItemParser()
@@ -85,6 +157,7 @@ class GoofishCompassService:
         self._api_total_available: int | None = None
         self._search_response_seen: bool = False
         self._search_error: str | None = None
+        self._verification_url: str | None = None
 
     @classmethod
     def _is_search_api_url(cls, url: str) -> bool:
@@ -147,6 +220,131 @@ class GoofishCompassService:
             return cls._canonical_item_url(extracted)
         return raw_url
 
+    async def _handle_verification_and_sync_cookies(
+        self,
+        max_retries: int = 5,
+        page: Optional[Page] = None
+    ) -> bool:
+        """
+        通用滑块及拦截验证处理，自动从 Playwright 导出 cookies 并同步数据库。
+        """
+        target_page = page or self.browser.page
+        if not target_page:
+            return True
+
+        v_url = getattr(self, "_verification_url", None)
+        has_slider = False
+        detected_selector = None
+
+        if not v_url:
+            has_slider, detected_selector = await self.slider_handler.detect_slider(target_page)
+            if not has_slider:
+                return True
+        else:
+            detected_selector = "FAIL_SYS_USER_VALIDATE (API URL)"
+            has_slider = True
+
+        logger.warning(f"⚠️ 检测到安全拦截或滑块验证（{detected_selector}），开始处理...")
+
+        captcha_ok = False
+        new_cookies_dict = None
+
+        # 优先通过验证 URL 调用统一 fallback 滑块引擎
+        if v_url:
+            logger.warning(f"🚀 发现拦截验证 URL，优先调用 token 流 run_slider_verification_with_fallback. URL: {v_url}")
+            try:
+                from common.services.captcha.orchestrator import run_slider_verification_with_fallback
+                success, cookies, captcha_engine = await asyncio.to_thread(
+                    run_slider_verification_with_fallback,
+                    user_id=f"{self.user_id}",
+                    url=v_url,
+                    enable_learning=True,
+                    headless=not bool(self.config.headless),
+                    browser_timeout=25,
+                    existing_cookies_str=self.cookie_value,
+                )
+                if success and cookies:
+                    captcha_ok = True
+                    new_cookies_dict = cookies
+                    logger.success(f"✅ 通过 run_slider_verification_with_fallback 验证成功（引擎: {captcha_engine}）")
+            except Exception as e:
+                logger.error(f"❌ 调用 run_slider_verification_with_fallback 发生异常: {e}")
+
+        # 如果没有 URL 验证，或者 URL 验证没成功，但在当前页面显示了滑块，在当前页面滑动
+        if not captcha_ok:
+            page_slider, _ = await self.slider_handler.detect_slider(target_page)
+            if page_slider:
+                logger.info("⏳ 尝试在当前 Playwright 页面进行滑块验证...")
+                captcha_ok = await self.slider_handler.handle_verification(
+                    page=target_page,
+                    context=self.browser.context,
+                    max_retries=max_retries,
+                    allow_manual=not bool(self.config.headless),
+                )
+                if captcha_ok and self.browser.context:
+                    try:
+                        page_cookies = await self.browser.context.cookies()
+                        new_cookies_dict = {c["name"]: c["value"] for c in page_cookies}
+                    except Exception as e:
+                        logger.error(f"❌ 从当前页面 context 提取 cookies 异常: {e}")
+
+        if not captcha_ok:
+            logger.error("❌ 验证码处理失败，无法继续")
+            return False
+
+        # 提取 x5sec 并更新浏览器及数据库
+        if new_cookies_dict:
+            x5sec_cookies = {}
+            for k, v in new_cookies_dict.items():
+                if k.lower().startswith('x5') or 'x5sec' in k.lower():
+                    x5sec_cookies[k] = v
+
+            if x5sec_cookies:
+                logger.info(f"🔮 导出成功，检测到 x5sec cookies: {list(x5sec_cookies.keys())}")
+                
+                # 写入浏览器 context
+                try:
+                    new_cookies_list = []
+                    for k, v in x5sec_cookies.items():
+                        new_cookies_list.append({
+                            'name': k,
+                            'value': v,
+                            'domain': '.goofish.com',
+                            'path': '/'
+                        })
+                    if self.browser.context:
+                        await self.browser.context.add_cookies(new_cookies_list)
+                        logger.info("已将最新 x5sec cookies 覆盖写入当前浏览器 context")
+                except Exception as e:
+                    logger.error(f"❌ 写入最新 x5sec cookies 到浏览器 context 失败: {e}")
+
+                # 写入数据库并更新内存变量
+                if self.db_session:
+                    updated = await update_xy_account_cookie(
+                        db_session=self.db_session,
+                        user_id=self.user_id,
+                        old_cookie=self.cookie_value,
+                        new_x5sec_cookies=x5sec_cookies
+                    )
+                    if updated:
+                        old_cookies_dict = {}
+                        if self.cookie_value:
+                            for pair in self.cookie_value.split(";"):
+                                pair = pair.strip()
+                                if "=" in pair:
+                                    k, v = pair.split("=", 1)
+                                    old_cookies_dict[k.strip()] = v.strip()
+                        for k, v in x5sec_cookies.items():
+                            old_cookies_dict[k] = v
+                        self.cookie_value = "; ".join([f"{k}={v}" for k, v in old_cookies_dict.items()])
+            else:
+                logger.warning("⚠️ 验证通过，但提取 of cookies 中没有发现 x5sec 相关的 cookie，这可能是因为该验证未触达下发条件")
+
+        if hasattr(self, "_verification_url"):
+            self._verification_url = None
+
+        return True
+
     async def _on_search_response(self, response: Any) -> None:
         url = getattr(response, "url", "") or ""
         if not self._is_search_api_url(url):
@@ -166,16 +364,27 @@ class GoofishCompassService:
             self._search_response_seen = True
 
             ret = (result_json or {}).get("ret")
+            is_blocked = False
             if isinstance(ret, list) and ret:
                 non_success = [str(x) for x in ret if x and not str(x).startswith("SUCCESS")]
                 if non_success:
                     self._search_error = "; ".join(non_success[:3])
+                    if any("FAIL_SYS_USER_VALIDATE" in x for x in non_success):
+                        is_blocked = True
 
             data = (result_json or {}).get("data") or {}
             if isinstance(data, dict):
                 data_error = data.get("errorMsg") or data.get("error_message") or data.get("message")
                 if data_error and not self._search_error:
                     self._search_error = str(data_error)
+                if data_error and "FAIL_SYS_USER_VALIDATE" in str(data_error):
+                    is_blocked = True
+
+            if is_blocked or (self._search_error and "FAIL_SYS_USER_VALIDATE" in str(self._search_error)):
+                v_url = data.get("url") or (result_json or {}).get("data", {}).get("url")
+                if v_url:
+                    self._verification_url = v_url
+                    logger.warning(f"📌 _on_search_response 捕获到 API 拦截，验证 URL: {self._verification_url}")
 
             total_available = (
                 data.get("total")
@@ -589,11 +798,9 @@ class GoofishCompassService:
             await collect_detail_responses(timeout_ms=min(2500, int(self.config.detail_response_timeout_ms)))
             await asyncio.sleep(0.5)
 
-            captcha_ok = await self.slider_handler.handle_verification(
-                page=page,
-                context=self.browser.context,
+            captcha_ok = await self._handle_verification_and_sync_cookies(
                 max_retries=3,
-                allow_manual=not bool(self.config.headless),
+                page=page
             )
             if not captcha_ok:
                 return {"detail_error": "captcha_failed"}
@@ -733,12 +940,8 @@ class GoofishCompassService:
             await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
             await asyncio.sleep(2)
 
-            # 处理验证码
-            captcha_ok = await self.slider_handler.handle_verification(
-                page=self.browser.page,
-                context=self.browser.context,
-                max_retries=3,
-                allow_manual=not bool(self.config.headless),
+            captcha_ok = await self._handle_verification_and_sync_cookies(
+                max_retries=3
             )
             if not captcha_ok:
                 return {"error": "captcha_failed", "items": [], "total": 0}
@@ -892,12 +1095,8 @@ class GoofishCompassService:
             await self.browser.navigate_to(seller_url, timeout=self.config.navigation_timeout_ms)
             await asyncio.sleep(3)
 
-            # 处理验证码
-            captcha_ok = await self.slider_handler.handle_verification(
-                page=self.browser.page,
-                context=self.browser.context,
-                max_retries=3,
-                allow_manual=not bool(self.config.headless),
+            captcha_ok = await self._handle_verification_and_sync_cookies(
+                max_retries=3
             )
             if not captcha_ok:
                 return {"items": [], "total": 0, "error": "滑块验证失败"}
@@ -979,19 +1178,32 @@ class GoofishCompassService:
                 self.browser.page.on("response", self._on_search_response)
 
             await search_input.fill(keyword.strip())
-            await self.browser.click('button[type="submit"]')
-            await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
-            await self._collect_search_responses(timeout_ms=min(3000, int(self.config.network_idle_timeout_ms)))
-            await asyncio.sleep(2)
 
-            captcha_ok = await self.slider_handler.handle_verification(
-                page=self.browser.page,
-                context=self.browser.context,
-                max_retries=5,
-                allow_manual=not bool(self.config.headless),
-            )
-            if not captcha_ok:
-                return {"items": [], "total": 0, "error": "滑块验证失败（建议在账号管理中开启“显示浏览器”后重试）"}
+            # 增加重试机制，应对拦截
+            max_search_retries = 3
+            for attempt in range(max_search_retries):
+                self._search_error = None
+                self._search_response_seen = False
+                self._items.clear()
+
+                logger.info(f"发送搜索请求 (尝试 {attempt + 1}/{max_search_retries})...")
+                await self.browser.click('button[type="submit"]')
+                await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
+                await self._collect_search_responses(timeout_ms=min(3000, int(self.config.network_idle_timeout_ms)))
+                await asyncio.sleep(2)
+
+                # 处理可能出现的滑块并更新 Cookie 到数据库与浏览器
+                captcha_ok = await self._handle_verification_and_sync_cookies(max_retries=5)
+                if not captcha_ok:
+                    return {"items": [], "total": 0, "error": "滑块验证失败（建议在账号管理中开启“显示浏览器”后重试）"}
+
+                # 如果没有拦截错误，或者获取数据成功，则跳出重试
+                if not self._search_error or "FAIL_SYS_USER_VALIDATE" not in str(self._search_error):
+                    logger.success(f"🎉 搜索成功，获取数据成功（尝试次数: {attempt + 1}）")
+                    break
+                else:
+                    logger.warning(f"⚠️ 搜索仍被拦截，准备下一次重试 (尝试 {attempt + 1} 失败: {self._search_error})")
+                    await asyncio.sleep(1)
 
             # jump to start_page
             current_page = 1

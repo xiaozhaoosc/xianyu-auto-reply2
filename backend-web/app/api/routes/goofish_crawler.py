@@ -287,6 +287,7 @@ async def run_once_job(
                 user_id=str(account.id),
                 cookie_value=account.cookie,
                 config=config,
+                db_session=db,
             )
             
             search_result = await service.search(
@@ -497,6 +498,7 @@ async def fetch_by_seller(
             user_id=str(account.id),
             cookie_value=account.cookie,
             config=config,
+            db_session=db,
         )
 
         all_items = []
@@ -638,6 +640,7 @@ async def fetch_by_id(
             user_id=str(account.id),
             cookie_value=account.cookie,
             config=config,
+            db_session=db,
         )
 
         results = []

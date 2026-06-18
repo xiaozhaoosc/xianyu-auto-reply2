@@ -468,3 +468,56 @@
 | **全局环境变量自愈** | 实现了 `BROWSER_HEADLESS` 配置在加载后自动同步更新至系统底层环境变量 | ✅ 验证无误 & 已提交并推送 | 经验证在加载配置后 `os.environ["BROWSER_HEADLESS"]` 准确更新为 "false"。 |
 | **商品搜索防反爬增强** | 完美抹除了 `BrowserManager` 的自动化特征，实现了手动滑动与自动滑动的 100% 反检测 | ✅ 验证无误 & 已提交并推送 | 解决此前手动拖拽滑块由于无 stealth 脚本指纹分裂导致 100% 报错的问题。 |
 
+---
+
+## 📅 2026-06-18 (十二次迭代) — SSH 免密登录配置自动化与 Skill 沉淀
+
+### [Morning_Briefing]
+- **昨日未竟**: 无 (前人已完美解决滑块反爬及全局 Headless 变量回填)。
+- **隐患预警**: SSH 免密登录过程中需要首次进行 Host Key 验证以及密码输入交互。如果由 CLI 脚本直接静默完成，会因为无法提供密码输入渠道而报错，需提供交互配合路径。
+- **今日建议**:
+  1. 编写包含 SSH 密钥检测自愈的 PowerShell 脚本 `setup_ssh.ps1`，允许用户配合输入一次密码。
+  2. 建立本地 Workspace 专属 Skill，确保未来任何 Agent 可以直接加载并重用免密登录配置策略。
+
+### [Daily_Summary]
+
+| 模块/文件 | 变更类型 | 变更描述 |
+| :--- | :--- | :--- |
+| [setup_ssh.ps1](file:///D:/IdeaProjects/xianyu-auto-reply2/scripts/setup_ssh.ps1) | 新增 | 编写了 Windows 本地到远程主机 192.168.1.21 (ken3zhao) 自动配置公钥并安全对齐权限的自动化脚本，含 BatchMode 自动免密校验。 |
+| [SKILL.md](file:///D:/IdeaProjects/xianyu-auto-reply2/.agents/skills/ssh-setup/SKILL.md) | 新增 | 构建了 Workspace 特性 Skill 文档，实现 SSH 自动配置能力沉淀，以便后续 AI 伙伴无感自愈调用。 |
+
+### [Project_Reflection]
+
+| 任务模块 | 交付成果 | 验证状态 | 备注 |
+| :--- | :--- | :--- | :--- |
+| **SSH免密登录** | 提供了 `.\scripts\setup_ssh.ps1` 与定制 Skill | ✅ 已创建并入库 | 用户仅需在提示时输入一次密码即可，余下所有步骤（公钥生成、传输、权限修补、BatchMode验证）全部由脚本自动化执行。 |
+
+
+---
+
+## 📅 2026-06-18 (第十二次迭代) — 商品采集与搜索滑块闭环及 Cookie 同步
+
+### [Morning_Briefing]
+- **昨日未竟**: 解决商品采集与搜索遭遇淘宝滑块拦截时，由于无法导出更新后的 `x5sec` cookie 并同步至数据库与当前浏览器 context，也未能在通过验证后进行搜索重试而引发的无限死循环问题。
+- **隐患预警**: 如果在数据库未连接或 db_session 传参缺失时触发滑块，虽然滑块可能通过，但无法回写持久化。需确保各路由及异步后台任务中已补全 `db_session`。
+- **今日建议**:
+  1. 在 `GoofishCompassService` 和 `ItemSearchService` 中实现统一的 `_handle_verification_and_sync_cookies` 逻辑。
+  2. 搜索遇到 API 拦截 (`FAIL_SYS_USER_VALIDATE`) 时，支持重试机制（最多 3 次），并在重试前完成滑块和 cookie 同步。
+  3. 各接口路由和定时任务实例化 `GoofishCompassService` 时，补全 `db_session` 传参。
+
+### [Daily_Summary]
+
+| 模块/文件 | 变更类型 | 变更描述 |
+| :--- | :--- | :--- |
+| [goofish_compass.py](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/services/compass/goofish_compass.py) | 修改 | 编写通用滑块验证及 cookie 同步更新函数 `_handle_verification_and_sync_cookies`，拦截时提取 `FAIL_SYS_USER_VALIDATE` 的验证 URL；在 `search` 搜索流中引入带滑块重试机制（最多 3 次）。 |
+| [searcher.py](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/services/search/searcher.py) | 修改 | 对齐 `_handle_verification_and_sync_cookies` 滑块验证及 cookie 同步数据库与浏览器 context 逻辑，为 `search_items` and `search_multiple_pages` 搜索流补全被拦截时重试（最多 3 次）的闭环处理。 |
+| [goofish_compass.py (api)](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/api/routes/goofish_compass.py) | 修改 | 实例化 `GoofishCompassService` 时，补全传入 `db_session=db`，使其能正常同步新 cookie 写入闲鱼账户。 |
+| [goofish_crawler.py (api)](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/api/routes/goofish_crawler.py) | 修改 | 补全 3 处实例化 `GoofishCompassService` 时传入 `db_session=db` 参数。 |
+| [goofish_crawler.py (service)](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/services/goofish_crawler.py) | 修改 | 在后台异步定时采集任务中实例化 `GoofishCompassService` 时，传入 `db_session=session`。 |
+
+### [Project_Reflection]
+
+| 任务模块 | 交付成果 | 验证状态 | 备注 |
+| :--- | :--- | :--- | :--- |
+| **滑块闭环与重试** | 实现被拦截时，滑块通过 -> 导出最新 x5sec cookie -> 同步数据库 -> 写入当前浏览器 context -> 重试搜索的闭环逻辑 | ✅ 验证无误 | 彻底解决了商品采集与搜索被淘宝滑块拦截后只记录错误而不重试的 Bug。 |
+| **传参自愈** | 全局补齐 `GoofishCompassService` 实例化时所需数据库会话 `db_session` 参数 | ✅ 验证无误 | 确保 cookie 被成功回写持久化。 |

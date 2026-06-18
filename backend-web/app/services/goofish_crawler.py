@@ -1,4 +1,4 @@
-﻿"""
+"""
 Goofish 定时采集任务管理器
 
 管理 Goofish 商品采集任务的创建、启动、停止和执行
@@ -199,6 +199,7 @@ class GoofishCrawlManager:
                             user_id=str(owner_id),
                             cookie_value=account.cookie,
                             config=config,
+                            db_session=session,
                         )
                         return await service.search(
                             keyword=job.keyword,

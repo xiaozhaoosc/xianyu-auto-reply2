@@ -1,4 +1,4 @@
-﻿"""
+"""
 商品搜索服务
 
 基于Playwright实现闲鱼商品搜索
@@ -57,6 +57,9 @@ class ItemSearchService:
         self.slider_handler = SliderHandler(user_id)
         self.api_responses: List[Dict] = []
         self.data_list: List[Dict] = []
+        self.cookie_value: str = ""
+        self._search_error: Optional[str] = None
+        self._verification_url: Optional[str] = None
 
     async def get_first_valid_cookie(self) -> Optional[Dict[str, str]]:
         """获取第一个有效的cookie"""
@@ -76,6 +79,7 @@ class ItemSearchService:
 
             if account and account.cookie and len(account.cookie) > 50:
                 logger.info(f"找到有效cookie: {account.account_id}")
+                self.cookie_value = account.cookie
                 return {
                     'id': account.account_id,
                     'value': account.cookie
@@ -104,6 +108,29 @@ class ItemSearchService:
                 self.api_responses.append(result_json)
                 logger.info(f"捕获到API响应")
 
+                ret = (result_json or {}).get("ret")
+                is_blocked = False
+                if isinstance(ret, list) and ret:
+                    non_success = [str(x) for x in ret if x and not str(x).startswith("SUCCESS")]
+                    if non_success:
+                        self._search_error = "; ".join(non_success[:3])
+                        if any("FAIL_SYS_USER_VALIDATE" in x for x in non_success):
+                            is_blocked = True
+
+                data = (result_json or {}).get("data") or {}
+                if isinstance(data, dict):
+                    data_error = data.get("errorMsg") or data.get("error_message") or data.get("message")
+                    if data_error and not self._search_error:
+                        self._search_error = str(data_error)
+                    if data_error and "FAIL_SYS_USER_VALIDATE" in str(data_error):
+                        is_blocked = True
+
+                if is_blocked or (self._search_error and "FAIL_SYS_USER_VALIDATE" in str(self._search_error)):
+                    v_url = data.get("url") or (result_json or {}).get("data", {}).get("url")
+                    if v_url:
+                        self._verification_url = v_url
+                        logger.warning(f"📌 _on_response 捕获到 API 拦截，验证 URL: {self._verification_url}")
+
                 items = result_json.get("data", {}).get("resultList", [])
                 logger.info(f"从API获取到 {len(items)} 条原始数据")
 
@@ -112,6 +139,132 @@ class ItemSearchService:
 
             except Exception as e:
                 logger.warning(f"响应处理异常: {str(e)}")
+
+    async def _handle_verification_and_sync_cookies(
+        self,
+        max_retries: int = 5,
+        page: Optional[Page] = None
+    ) -> bool:
+        """
+        通用滑块及拦截验证处理，自动从 Playwright 导出 cookies 并同步数据库。
+        """
+        target_page = page or self.browser.page
+        if not target_page:
+            return True
+
+        v_url = getattr(self, "_verification_url", None)
+        has_slider = False
+        detected_selector = None
+
+        if not v_url:
+            has_slider, detected_selector = await self.slider_handler.detect_slider(target_page)
+            if not has_slider:
+                return True
+        else:
+            detected_selector = "FAIL_SYS_USER_VALIDATE (API URL)"
+            has_slider = True
+
+        logger.warning(f"⚠️ 搜索流检测到安全拦截或滑块验证（{detected_selector}），开始处理...")
+
+        captcha_ok = False
+        new_cookies_dict = None
+
+        # 优先通过验证 URL 调用统一 fallback 滑块引擎
+        if v_url:
+            logger.warning(f"🚀 发现拦截验证 URL，优先调用 token 流 run_slider_verification_with_fallback. URL: {v_url}")
+            try:
+                from common.services.captcha.orchestrator import run_slider_verification_with_fallback
+                success, cookies, captcha_engine = await asyncio.to_thread(
+                    run_slider_verification_with_fallback,
+                    user_id=f"{self.user_id}",
+                    url=v_url,
+                    enable_learning=True,
+                    headless=False,
+                    browser_timeout=25,
+                    existing_cookies_str=self.cookie_value,
+                )
+                if success and cookies:
+                    captcha_ok = True
+                    new_cookies_dict = cookies
+                    logger.success(f"✅ 通过 run_slider_verification_with_fallback 验证成功（引擎: {captcha_engine}）")
+            except Exception as e:
+                logger.error(f"❌ 调用 run_slider_verification_with_fallback 发生异常: {e}")
+
+        # 如果没有 URL 验证，或者 URL 验证没成功，但在当前页面显示了滑块，在当前页面滑动
+        if not captcha_ok:
+            page_slider, _ = await self.slider_handler.detect_slider(target_page)
+            if page_slider:
+                logger.info("⏳ 尝试在当前 Playwright 页面进行滑块验证...")
+                captcha_ok = await self.slider_handler.handle_verification(
+                    page=target_page,
+                    context=self.browser.context,
+                    max_retries=max_retries,
+                    allow_manual=True,
+                )
+                if captcha_ok and self.browser.context:
+                    try:
+                        page_cookies = await self.browser.context.cookies()
+                        new_cookies_dict = {c["name"]: c["value"] for c in page_cookies}
+                    except Exception as e:
+                        logger.error(f"❌ 从当前页面 context 提取 cookies 异常: {e}")
+
+        if not captcha_ok:
+            logger.error("❌ 验证码处理失败，无法继续")
+            return False
+
+        # 提取 x5sec 并更新浏览器及数据库
+        if new_cookies_dict:
+            x5sec_cookies = {}
+            for k, v in new_cookies_dict.items():
+                if k.lower().startswith('x5') or 'x5sec' in k.lower():
+                    x5sec_cookies[k] = v
+
+            if x5sec_cookies:
+                logger.info(f"🔮 导出成功，检测到 x5sec cookies: {list(x5sec_cookies.keys())}")
+                
+                # 写入浏览器 context
+                try:
+                    new_cookies_list = []
+                    for k, v in x5sec_cookies.items():
+                        new_cookies_list.append({
+                            'name': k,
+                            'value': v,
+                            'domain': '.goofish.com',
+                            'path': '/'
+                        })
+                    if self.browser.context:
+                        await self.browser.context.add_cookies(new_cookies_list)
+                        logger.info("已将最新 x5sec cookies 覆盖写入当前浏览器 context")
+                except Exception as e:
+                    logger.error(f"❌ 写入最新 x5sec cookies 到浏览器 context 失败: {e}")
+
+                # 写入数据库并更新内存变量
+                if self.db_session:
+                    from app.services.compass.goofish_compass import update_xy_account_cookie
+                    updated = await update_xy_account_cookie(
+                        db_session=self.db_session,
+                        user_id=self.user_id,
+                        old_cookie=self.cookie_value,
+                        new_x5sec_cookies=x5sec_cookies
+                    )
+                    if updated:
+                        old_cookies_dict = {}
+                        if self.cookie_value:
+                            for pair in self.cookie_value.split(";"):
+                                pair = pair.strip()
+                                if "=" in pair:
+                                    k, v = pair.split("=", 1)
+                                    old_cookies_dict[k.strip()] = v.strip()
+                        for k, v in x5sec_cookies.items():
+                            old_cookies_dict[k] = v
+                        self.cookie_value = "; ".join([f"{k}={v}" for k, v in old_cookies_dict.items()])
+            else:
+                logger.warning("⚠️ 验证通过，但提取的 cookies 中没有发现 x5sec 相关的 cookie")
+
+        if hasattr(self, "_verification_url"):
+            self._verification_url = None
+
+        return True
 
     async def search_items(
         self,
@@ -170,29 +323,38 @@ class ItemSearchService:
             # 注册响应监听
             self.browser.on_response(self._on_response)
 
-            await self.browser.click('button[type="submit"]')
-            await self.browser.wait_for_network_idle(timeout=15000)
+            # 增加重试机制，应对拦截
+            max_search_retries = 3
+            for attempt in range(max_search_retries):
+                self._search_error = None
+                self._verification_url = None
+                self.data_list.clear()
 
-            # 等待API响应
-            await asyncio.sleep(2)
+                logger.info(f"发送搜索请求 (尝试 {attempt + 1}/{max_search_retries})...")
+                await self.browser.click('button[type="submit"]')
+                await self.browser.wait_for_network_idle(timeout=15000)
+                await asyncio.sleep(2)
 
-            # 处理弹窗
-            try:
-                await self.browser.press_key('Escape')
-                await asyncio.sleep(0.5)
-            except Exception:
-                pass
+                # 处理弹窗
+                try:
+                    await self.browser.press_key('Escape')
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
 
-            # 处理滑块验证
-            slider_result = await self.slider_handler.handle_verification(
-                page=self.browser.page,
-                context=self.browser.context,
-                max_retries=5
-            )
+                # 处理滑块并同步 Cookie 到数据库与浏览器
+                captcha_ok = await self._handle_verification_and_sync_cookies(max_retries=5)
+                if not captcha_ok:
+                    logger.error("❌ 滑块验证失败")
+                    return {'items': [], 'total': 0, 'error': '滑块验证失败'}
 
-            if not slider_result:
-                logger.error("❌ 滑块验证失败")
-                return {'items': [], 'total': 0, 'error': '滑块验证失败'}
+                # 如果没有拦截错误，或者数据获取成功，则跳出重试
+                if not self._search_error or "FAIL_SYS_USER_VALIDATE" not in str(self._search_error):
+                    logger.success(f"🎉 搜索成功，获取数据成功（尝试次数: {attempt + 1}）")
+                    break
+                else:
+                    logger.warning(f"⚠️ 搜索仍被拦截，准备下一次重试 (尝试 {attempt + 1} 失败: {self._search_error})")
+                    await asyncio.sleep(1)
 
             await asyncio.sleep(3)
 
@@ -269,25 +431,36 @@ class ItemSearchService:
             await search_input.fill(keyword)
             self.browser.on_response(self._on_response)
 
-            await self.browser.click('button[type="submit"]')
-            await self.browser.wait_for_network_idle(timeout=15000)
+            # 增加重试机制，应对拦截
+            max_search_retries = 3
+            for attempt in range(max_search_retries):
+                self._search_error = None
+                self._verification_url = None
+                self.data_list.clear()
 
-            await asyncio.sleep(3)
+                logger.info(f"发送搜索请求 (尝试 {attempt + 1}/{max_search_retries})...")
+                await self.browser.click('button[type="submit"]')
+                await self.browser.wait_for_network_idle(timeout=15000)
+                await asyncio.sleep(2)
 
-            # 处理弹窗和滑块
-            try:
-                await self.browser.press_key('Escape')
-            except Exception:
-                pass
+                # 处理弹窗
+                try:
+                    await self.browser.press_key('Escape')
+                except Exception:
+                    pass
 
-            slider_result = await self.slider_handler.handle_verification(
-                page=self.browser.page,
-                context=self.browser.context,
-                max_retries=5
-            )
+                # 处理滑块并同步 Cookie
+                captcha_ok = await self._handle_verification_and_sync_cookies(max_retries=5)
+                if not captcha_ok:
+                    return {'items': [], 'total': 0, 'error': '滑块验证失败'}
 
-            if not slider_result:
-                return {'items': [], 'total': 0, 'error': '滑块验证失败'}
+                # 如果没有拦截错误，或者获取数据成功，则跳出重试
+                if not self._search_error or "FAIL_SYS_USER_VALIDATE" not in str(self._search_error):
+                    logger.success(f"🎉 搜索成功，获取数据成功（尝试次数: {attempt + 1}）")
+                    break
+                else:
+                    logger.warning(f"⚠️ 搜索仍被拦截，准备下一次重试 (尝试 {attempt + 1} 失败: {self._search_error})")
+                    await asyncio.sleep(1)
 
             await asyncio.sleep(3)
 
