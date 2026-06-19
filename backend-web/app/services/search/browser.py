@@ -134,10 +134,27 @@ class BrowserManager:
             )
             if chromium_path:
                 launch_kwargs["executable_path"] = chromium_path
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                self._user_data_dir,
-                **launch_kwargs,
-            )
+            try:
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    self._user_data_dir,
+                    **launch_kwargs,
+                )
+            except Exception as launch_e:
+                err_msg = str(launch_e)
+                if not launch_kwargs.get("headless") and (
+                    "XServer" in err_msg or 
+                    "DISPLAY" in err_msg or 
+                    "failed to initialize" in err_msg or 
+                    "closed" in err_msg
+                ):
+                    logger.warning(f"有头模式启动浏览器失败（可能由于无 GUI 环境/缺少 XServer），自动降级为无头模式重试: {launch_e}")
+                    launch_kwargs["headless"] = True
+                    self.context = await self.playwright.chromium.launch_persistent_context(
+                        self._user_data_dir,
+                        **launch_kwargs,
+                    )
+                else:
+                    raise
 
             # 在 Context 级别全局注入防检测（Stealth）脚本，防止 iframe 与新页面特征分裂
             await self.context.add_init_script(get_stealth_script(browser_features))

@@ -555,3 +555,29 @@
 | **镜像构建性能调优** | 在各 Dockerfile 引入阿里云镜像源提速，并在去除失效变量后保证浏览器下载通过 | ✅ 验证无误 & 已推送 | 系统依赖包拉取耗时从 10 分钟缩短至 1 分钟左右，完美解决 404 NoSuchKey 构建失败问题。 |
 | **远程重新部署自愈** | 自动同步 `dev_260618` 分支并完成无侵入式重新拉起与健康状态检测 | ✅ 验证无误 & 重新部署成功 | 所有远程容器运行状态均显示为 `healthy`，成功绕过前端 `9000` 端口冲突问题，平滑上线。 |
 | **首页滑块自愈重试** | 实现刚打开首页就被滑块拦截时的捕获、同步 Cookie 及搜索框寻找自愈重试机制 | ✅ 验证无误 & 部署完毕 | 彻底修复了因淘宝强风控在首页拦截导致找不到搜索框元素从而报“搜索失败”的逻辑缺陷。 |
+
+---
+
+## 📅 2026-06-19 (第十四次迭代) — 引入 Playwright 浏览器无 GUI 环境启动自愈机制
+
+### [Morning_Briefing]
+- **昨日未竟**: 修复远程容器或无 GUI 运行环境中因缺少 XServer/DISPLAY 环境导致 headed 浏览器拉起失败、系统任务意外中断的问题。
+- **隐患预警**: 
+  - headed 模式如果直接降级为无头，虽然解决了启动崩溃问题，但在强风控或要求扫码登录等不可避免的场景下，无头模式将限制人工干预，应提醒用户尽量在部署前配置正确的 headless 参数或考虑虚拟 XServer 方案。
+- **今日建议**:
+  - 在 `browser.py`、`slider_stealth.py`、`cookie_renew_browser_service.py` 的启动异常捕获中，加入检测缺失 XServer/DISPLAY 的退避逻辑，在报错时自动切换为 `headless=True` 重试启动，以实现启动故障自愈。
+
+### [Daily_Summary]
+
+| 模块/文件 | 变更类型 | 变更描述 |
+| :--- | :--- | :--- |
+| [browser.py](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/services/search/browser.py) | 修改 | 引入捕获启动持久化上下文异常，检测到缺失 GUI 报错后，自动降级为无头重试拉起。 |
+| [slider_stealth.py](file:///D:/IdeaProjects/xianyu-auto-reply2/common/services/captcha/slider_stealth.py) | 修改 | 修改启动重试环路， headed 启动失败且由于缺失 GUI 异常时，将后续重试强制置为 `headless=True` 进行自愈。 |
+| [cookie_renew_browser_service.py](file:///D:/IdeaProjects/xianyu-auto-reply2/common/services/cookie_renew_browser_service.py) | 修改 | 对齐启动循环自愈机制，检测到图形环境缺失报错时，自愈重试无头模式运行。 |
+
+### [Project_Reflection]
+
+| 任务模块 | 交付成果 | 验证状态 | 备注 |
+| :--- | :--- | :--- | :--- |
+| **启动自愈机制** | 实现所有核心模块遭遇 GUI 缺失异常时，自动回退到无头模式成功拉起浏览器 | ✅ 单元测试全绿通过 | Mock 第一次 headed 失败 -> 第二次无头成功，全面覆盖 3 大受损模块，平滑自愈。 |
+

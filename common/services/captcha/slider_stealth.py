@@ -307,6 +307,18 @@ class PlaywrightSliderService:
                     logger.warning(
                         f"【{self.pure_user_id}】第 {attempt}/{launch_attempts} 次启动浏览器失败: {err_text}"
                     )
+                    # 检查是否因为缺失XServer导致有头模式启动失败，自动降级为无头模式
+                    if not launch_kwargs.get("headless") and (
+                        "XServer" in err_text or 
+                        "DISPLAY" in err_text or 
+                        "failed to initialize" in err_text or 
+                        "closed" in err_text
+                    ):
+                        logger.warning(
+                            f"【{self.pure_user_id}】检测到可能由于无 GUI 环境/缺少 XServer 导致有头模式启动失败，自动将后续尝试降级为无头模式"
+                        )
+                        launch_kwargs["headless"] = True
+                        self.headless = True  # 同步更新实例属性
                     # 仅在还有重试机会时才清理并继续
                     if attempt < launch_attempts:
                         logger.info(

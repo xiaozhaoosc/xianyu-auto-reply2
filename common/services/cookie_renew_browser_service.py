@@ -456,9 +456,21 @@ class CookieRenewBrowserService:
                     break
                 except Exception as launch_e:
                     last_launch_error = launch_e
+                    err_text = str(launch_e)
                     logger.warning(
                         f"{log_prefix} 第 {attempt}/{launch_attempts} 次启动浏览器失败: {launch_e}"
                     )
+                    # 检查是否因为缺失XServer导致有头模式启动失败，自动降级为无头模式
+                    if not launch_kwargs.get("headless") and (
+                        "XServer" in err_text or 
+                        "DISPLAY" in err_text or 
+                        "failed to initialize" in err_text or 
+                        "closed" in err_text
+                    ):
+                        logger.warning(
+                            f"{log_prefix} 检测到可能由于无 GUI 环境/缺少 XServer 导致有头模式启动失败，自动将后续尝试降级为无头模式"
+                        )
+                        launch_kwargs["headless"] = True
                     if attempt < launch_attempts:
                         self._clean_singleton_lock_files(user_data_dir, log_prefix)
                         time.sleep(1)
