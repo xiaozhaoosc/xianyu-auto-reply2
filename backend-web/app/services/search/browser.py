@@ -134,27 +134,62 @@ class BrowserManager:
             )
             if chromium_path:
                 launch_kwargs["executable_path"] = chromium_path
-            try:
-                self.context = await self.playwright.chromium.launch_persistent_context(
-                    self._user_data_dir,
-                    **launch_kwargs,
-                )
-            except Exception as launch_e:
-                err_msg = str(launch_e)
-                if not launch_kwargs.get("headless") and (
-                    "XServer" in err_msg or 
-                    "DISPLAY" in err_msg or 
-                    "failed to initialize" in err_msg or 
-                    "closed" in err_msg
-                ):
-                    logger.warning(f"有头模式启动浏览器失败（可能由于无 GUI 环境/缺少 XServer），自动降级为无头模式重试: {launch_e}")
-                    launch_kwargs["headless"] = True
+
+            # 【防锁死与防并发冲突设计】
+            # 如果 SingletonLock 残留或者有并发请求占用同一个 profile 目录，
+            # 捕获异常并切换到全新的隔离临时目录重试，最多重试 3 次不同的目录。
+            import uuid
+            current_user_data_dir = self._user_data_dir
+            max_launch_attempts = 3
+            
+            for attempt in range(1, max_launch_attempts + 1):
+                try:
+                    # 尝试清理旧锁文件（SingletonLock 在 Linux 下是软链接，Windows 下是文件）
+                    lock_file = os.path.join(current_user_data_dir, "SingletonLock")
+                    if os.path.exists(lock_file):
+                        try:
+                            if os.path.islink(lock_file):
+                                os.unlink(lock_file)
+                            else:
+                                os.remove(lock_file)
+                            logger.info(f"清理了已存在的 SingletonLock: {lock_file}")
+                        except Exception as lock_e:
+                            logger.debug(f"无法清理 SingletonLock (可能被占用中): {lock_e}")
+
                     self.context = await self.playwright.chromium.launch_persistent_context(
-                        self._user_data_dir,
+                        current_user_data_dir,
                         **launch_kwargs,
                     )
-                else:
-                    raise
+                    # 启动成功，更新实际使用的数据目录并跳出循环
+                    self._user_data_dir = current_user_data_dir
+                    break
+                except Exception as launch_e:
+                    err_msg = str(launch_e)
+                    is_lock_conflict = "Opening in existing browser session" in err_msg or "profile is already in use" in err_msg
+                    
+                    if is_lock_conflict and attempt < max_launch_attempts:
+                        logger.warning(
+                            f"⚠️ 浏览器目录 {current_user_data_dir} 被占用或存在锁冲突，"
+                            f"第 {attempt}/{max_launch_attempts} 次尝试切换到临时随机隔离目录..."
+                        )
+                        # 产生一个带 UUID 后缀的新目录
+                        current_user_data_dir = os.path.join(
+                            tempfile.gettempdir(), 
+                            f'xianyu_browser_cache_{uuid.uuid4().hex[:8]}'
+                        )
+                        os.makedirs(current_user_data_dir, exist_ok=True)
+                    else:
+                        # 检查有头模式不支持的降级逻辑（原有逻辑）
+                        if not launch_kwargs.get("headless") and (
+                            "XServer" in err_msg or 
+                            "DISPLAY" in err_msg or 
+                            "failed to initialize" in err_msg or 
+                            "closed" in err_msg
+                        ):
+                            logger.warning(f"有头模式启动浏览器失败（可能由于无 GUI 环境/缺少 XServer），自动降级为无头模式重试: {launch_e}")
+                            launch_kwargs["headless"] = True
+                            continue
+                        raise
 
             # 在 Context 级别全局注入防检测（Stealth）脚本，防止 iframe 与新页面特征分裂
             await self.context.add_init_script(get_stealth_script(browser_features))
@@ -191,6 +226,20 @@ class BrowserManager:
                 self.playwright = None
 
             logger.debug("浏览器已关闭（缓存已保存）")
+
+            # 【清理随机临时目录】
+            # 如果当前使用的是临时隔离目录（即带有 uuid 后缀的目录），在关闭时将其彻底删除，防止临时文件泄露。
+            # 原有的 /tmp/xianyu_browser_cache 目录则保留以作复用。
+            if self._user_data_dir and self._user_data_dir != os.path.join(tempfile.gettempdir(), 'xianyu_browser_cache'):
+                try:
+                    import shutil
+                    if os.path.exists(self._user_data_dir):
+                        # 延迟一小会儿，确保浏览器进程已经完全退出、释放了所有文件句柄
+                        await asyncio.sleep(0.5)
+                        shutil.rmtree(self._user_data_dir, ignore_errors=True)
+                        logger.info(f"清理了临时隔离浏览器目录: {self._user_data_dir}")
+                except Exception as clean_e:
+                    logger.debug(f"清理临时目录失败: {clean_e}")
 
         except Exception as e:
             logger.warning(f"关闭浏览器时出错: {e}")
