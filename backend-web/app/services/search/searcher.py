@@ -333,6 +333,16 @@ class ItemSearchService:
             logger.info(f"正在搜索关键词: {keyword}")
             search_input = await self._find_search_input()
             if not search_input:
+                logger.warning("⚠️ 未能直接找到搜索框元素，检查当前页面是否被验证码/滑块拦截...")
+                captcha_ok = await self._handle_verification_and_sync_cookies(max_retries=5)
+                if captcha_ok:
+                    logger.info("验证通过后，重新加载页面再次尝试寻找搜索框...")
+                    if self.browser.page:
+                        await self.browser.page.reload()
+                        await asyncio.sleep(2)
+                    search_input = await self._find_search_input()
+
+            if not search_input:
                 raise Exception("未找到搜索框元素")
 
             await search_input.fill(keyword)
@@ -442,6 +452,16 @@ class ItemSearchService:
 
             # 搜索
             search_input = await self._find_search_input()
+            if not search_input:
+                logger.warning("⚠️ 未能直接找到搜索框元素，检查当前页面是否被验证码/滑块拦截...")
+                captcha_ok = await self._handle_verification_and_sync_cookies(max_retries=5)
+                if captcha_ok:
+                    logger.info("验证通过后，重新加载页面再次尝试寻找搜索框...")
+                    if self.browser.page:
+                        await self.browser.page.reload()
+                        await asyncio.sleep(2)
+                    search_input = await self._find_search_input()
+
             if not search_input:
                 raise Exception("未找到搜索框元素")
 
