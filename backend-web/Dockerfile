@@ -46,4 +46,4 @@ ENV PYTHONPATH=/app
 ENV TZ=Asia/Shanghai
 
 # 启动服务
-CMD ["xvfb-run", "python", "backend-web/main.py"]
+CMD ["sh", "-c", "rm -f /tmp/.X*-lock; xvfb-run python backend-web/main.py"]
