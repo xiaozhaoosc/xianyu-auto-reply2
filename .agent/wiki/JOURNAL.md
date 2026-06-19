@@ -530,11 +530,13 @@
 - **昨日未竟**: 解决远程重新部署项目由于 APT 源拉取极慢、淘宝 Playwright 镜像 404 导致构建卡死或失败的问题，并在远程部署时解决 9000 端口与 MinIO 冲突的问题。
 - **隐患预警**: 
   - 构建镜像时如果直接运行 `playwright install --with-deps` 安装系统 APT 依赖，在没有换成国内镜像源的情况下网络极慢，容易导致部署任务卡死超时；
-  - 容器端口映射不能与宿主机上其他重要全局容器（如 MinIO `ss-minio` 的 9000 端口）发生冲突，否则容器会因绑定端口失败（port already allocated）导致拉起失败。
+  - 容器端口映射不能与宿主机上其他重要全局容器（如 MinIO `ss-minio` 的 9000 端口）发生冲突，否则容器会因绑定端口失败（port already allocated）导致拉起失败；
+  - 倘若闲鱼账号的 Cookie 失效，或者由于其他风控原因，在刚访问 goofish 首页时页面即弹出滑块拦截，会导致程序因找不到首页搜索框而抛出“未找到搜索框元素”异常提前退出，而无法进入后续滑块验证及 Cookie 同步流程。
 - **今日建议**:
   - 优化 `backend-web/Dockerfile`、`websocket/Dockerfile` 和 `scheduler/Dockerfile`，更换 Debian APT 官方源为阿里云国内镜像源以提速；
   - 移除失效的淘宝 Playwright 镜像 Host（避免 404 错误），使 Playwright 浏览器主程序拉取回退至官方渠道；
-  - 修改 `docker-compose.yml` 前端宿主机端口为 `9002`，以避开 MinIO 占用的 `9000` 端口，保证容器可以顺利无感自愈拉起。
+  - 修改 `docker-compose.yml` 前端宿主机端口为 `9002`，以避开 MinIO 占用的 `9000` 端口，保证容器可以顺利无感自愈拉起；
+  - 在 `searcher.py` 寻找搜索框逻辑前置引入对滑块拦截的检查与自愈重试，让强风控拦截成功触发滑块处理。
 
 ### [Daily_Summary]
 
@@ -544,6 +546,7 @@
 | [Dockerfile](file:///D:/IdeaProjects/xianyu-auto-reply2/websocket/Dockerfile) | 修改 | 对齐阿里云 APT 镜像源配置，并去除了失效的 Playwright 下载镜像配置。 |
 | [Dockerfile](file:///D:/IdeaProjects/xianyu-auto-reply2/scheduler/Dockerfile) | 修改 | 对齐阿里云 APT 镜像源配置，并去除了失效的 Playwright 下载镜像配置。 |
 | [docker-compose.yml](file:///D:/IdeaProjects/xianyu-auto-reply2/docker-compose.yml) | 修改 | 将前端服务 `frontend` 的宿主机端口映射由 `9000` 改为 `9002`，避开服务器宿主机全局端口冲突（如 MinIO 等）。 |
+| [searcher.py](file:///D:/IdeaProjects/xianyu-auto-reply2/backend-web/app/services/search/searcher.py) | 修改 | 在 `search_items` 和 `search_multiple_pages` 搜索流中，若第一次查找搜索框失败，前置触发 `_handle_verification_and_sync_cookies`，成功通过验证后刷新页面再次查找，自愈了首页直接滑块拦截时抛出异常提前退出的问题。 |
 
 ### [Project_Reflection]
 
@@ -551,3 +554,4 @@
 | :--- | :--- | :--- | :--- |
 | **镜像构建性能调优** | 在各 Dockerfile 引入阿里云镜像源提速，并在去除失效变量后保证浏览器下载通过 | ✅ 验证无误 & 已推送 | 系统依赖包拉取耗时从 10 分钟缩短至 1 分钟左右，完美解决 404 NoSuchKey 构建失败问题。 |
 | **远程重新部署自愈** | 自动同步 `dev_260618` 分支并完成无侵入式重新拉起与健康状态检测 | ✅ 验证无误 & 重新部署成功 | 所有远程容器运行状态均显示为 `healthy`，成功绕过前端 `9000` 端口冲突问题，平滑上线。 |
+| **首页滑块自愈重试** | 实现刚打开首页就被滑块拦截时的捕获、同步 Cookie 及搜索框寻找自愈重试机制 | ✅ 验证无误 & 部署完毕 | 彻底修复了因淘宝强风控在首页拦截导致找不到搜索框元素从而报“搜索失败”的逻辑缺陷。 |
