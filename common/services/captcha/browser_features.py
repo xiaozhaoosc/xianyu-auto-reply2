@@ -1,4 +1,4 @@
-﻿"""
+"""
 浏览器特征和反检测脚本
 
 提供随机浏览器特征生成和反检测JavaScript脚本
@@ -260,21 +260,6 @@ def get_stealth_script(browser_features: Dict[str, Any]) -> str:
         const originalNow = Performance.prototype.now;
         Performance.prototype.now = function() {{
             return originalNow.call(this) + Math.random() * 0.1;
-        }};
-        
-        // 伪装Date API（添加微小随机偏移）
-        const OriginalDate = Date;
-        Date = function(...args) {{
-            if (args.length === 0) {{
-                const date = new OriginalDate();
-                const offset = Math.floor(Math.random() * 3) - 1;
-                return new OriginalDate(date.getTime() + offset);
-            }}
-            return new OriginalDate(...args);
-        }};
-        Date.prototype = OriginalDate.prototype;
-        Date.now = function() {{
-            return OriginalDate.now() + Math.floor(Math.random() * 3) - 1;
         }};
         
         // 隐藏CDP运行时特征
