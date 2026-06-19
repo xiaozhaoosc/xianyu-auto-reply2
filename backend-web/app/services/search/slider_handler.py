@@ -396,8 +396,13 @@ class SliderHandler:
         context: Optional[BrowserContext] = None,
         max_retries: int = 5,
         allow_manual: bool = True,
-    ) -> bool:
-        """通用滑块验证处理入口"""
+    ) -> tuple[bool, str]:
+        """通用滑块验证处理入口
+
+        Returns:
+            (是否验证成功, 验证成功后从浏览器导出的全部cookies字符串)
+        """
+        empty_cookies = ""
         try:
             await asyncio.sleep(1)
             logger.info("🔍 开始检测滑块验证...")
@@ -406,7 +411,7 @@ class SliderHandler:
 
             if not has_slider:
                 logger.info("✅ 未检测到滑块验证，继续执行")
-                return True
+                return True, empty_cookies
 
             logger.warning(f"⚠️ 检测到滑块验证（{detected_selector}），开始处理...")
 
@@ -419,12 +424,17 @@ class SliderHandler:
                 auto_ok = await self.handle_scratch_captcha_auto(page, max_retries=max_retries)
                 if auto_ok:
                     logger.success("✅ 刮刮乐滑块自动处理成功！")
-                    return True
+                    cookies_str = await self._export_cookies_from_context(context or page.context)
+                    return True, cookies_str
                 if not allow_manual:
                     logger.error("❌ 刮刮乐滑块自动处理失败（已禁用人工处理）")
-                    return False
+                    return False, empty_cookies
                 logger.warning("🧑‍💻 刮刮乐滑块自动处理失败，进入人工处理流程")
-                return await self.handle_scratch_captcha_manual(page, max_retries=3, wait_for_completion=True)
+                manual_ok = await self.handle_scratch_captcha_manual(page, max_retries=3, wait_for_completion=True)
+                if manual_ok:
+                    cookies_str = await self._export_cookies_from_context(context or page.context)
+                    return True, cookies_str
+                return False, empty_cookies
             else:
                 # 普通滑块使用PlaywrightSliderService处理
                 try:
@@ -446,15 +456,40 @@ class SliderHandler:
 
                     if success:
                         logger.success("✅ 滑块验证成功！")
-                        return True
+                        cookies_str = await self._export_cookies_from_context(context or page.context)
+                        return True, cookies_str
                     else:
                         logger.error("❌ 滑块验证失败")
-                        return False
+                        return False, empty_cookies
 
                 except ImportError:
                     logger.warning("PlaywrightSliderService不可用，尝试自动处理")
-                    return await self.handle_scratch_captcha_auto(page, max_retries)
+                    auto_ok = await self.handle_scratch_captcha_auto(page, max_retries)
+                    if auto_ok:
+                        cookies_str = await self._export_cookies_from_context(context or page.context)
+                        return True, cookies_str
+                    return False, empty_cookies
 
         except Exception as e:
             logger.error(f"❌ 滑块检测过程异常: {str(e)}")
-            return False
+            return False, empty_cookies
+
+    @staticmethod
+    async def _export_cookies_from_context(context) -> str:
+        """从 Playwright BrowserContext 导出全部 cookies 为字符串"""
+        try:
+            if not context:
+                return ""
+            cookies_list = await context.cookies()
+            if not cookies_list:
+                return ""
+            pairs = []
+            for c in cookies_list:
+                name = c.get("name", "")
+                value = c.get("value", "")
+                if name:
+                    pairs.append(f"{name}={value}")
+            return "; ".join(pairs)
+        except Exception as e:
+            logger.warning(f"导出浏览器 cookies 失败: {e}")
+            return ""

@@ -190,7 +190,7 @@ class ItemSearchService:
                 max_retries=5
             )
 
-            if not slider_result:
+            if not slider_result[0]:
                 logger.error("❌ 滑块验证失败")
                 return {'items': [], 'total': 0, 'error': '滑块验证失败'}
 
@@ -286,7 +286,7 @@ class ItemSearchService:
                 max_retries=5
             )
 
-            if not slider_result:
+            if not slider_result[0]:
                 return {'items': [], 'total': 0, 'error': '滑块验证失败'}
 
             await asyncio.sleep(3)

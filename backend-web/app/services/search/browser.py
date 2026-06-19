@@ -253,6 +253,25 @@ class BrowserManager:
         if self.page:
             await self.page.keyboard.press(key)
 
+    async def export_cookies(self) -> str:
+        """从浏览器 context 导出全部 cookie 为字符串（key1=val1; key2=val2）"""
+        try:
+            if not self.context:
+                return ""
+            cookies_list = await self.context.cookies()
+            if not cookies_list:
+                return ""
+            pairs = []
+            for c in cookies_list:
+                name = c.get("name", "")
+                value = c.get("value", "")
+                if name:
+                    pairs.append(f"{name}={value}")
+            return "; ".join(pairs)
+        except Exception as e:
+            logger.warning(f"导出浏览器 cookies 失败: {e}")
+            return ""
+
     def on_response(self, callback):
         """注册响应监听器"""
         if self.page:

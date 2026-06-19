@@ -85,6 +85,7 @@ class GoofishCompassService:
         self._api_total_available: int | None = None
         self._search_response_seen: bool = False
         self._search_error: str | None = None
+        self._captcha_verification_url: str | None = None
 
     @classmethod
     def _is_search_api_url(cls, url: str) -> bool:
@@ -167,9 +168,31 @@ class GoofishCompassService:
 
             ret = (result_json or {}).get("ret")
             if isinstance(ret, list) and ret:
+                ret_str = "; ".join(str(x) for x in ret)
                 non_success = [str(x) for x in ret if x and not str(x).startswith("SUCCESS")]
                 if non_success:
                     self._search_error = "; ".join(non_success[:3])
+                # 检测搜索接口是否被风控拦截（需要滑块验证）
+                captcha_keywords = ['FAIL_SYS_USER_VALIDATE', 'RGV587_ERROR', 'punish?x5secdata', 'captcha']
+                for kw in captcha_keywords:
+                    if kw in ret_str:
+                        logger.warning(f"⚠️ 搜索接口返回风控关键词: {kw}")
+                        self._search_error = ret_str
+                        # 尝试从 data.url 提取验证链接
+                        data_obj = (result_json or {}).get("data") or {}
+                        if isinstance(data_obj, dict) and data_obj.get("url"):
+                            self._captcha_verification_url = data_obj["url"]
+                        else:
+                            # 从 ret 中提取完整的 punish URL
+                            import re
+                            for ret_item in ret:
+                                m = re.search(r'(https?://[^\s]*punish\?x5secdata=[^\s&]*)', str(ret_item))
+                                if m:
+                                    self._captcha_verification_url = m.group(1)
+                                    break
+                        if self._captcha_verification_url:
+                            logger.info(f"📋 搜索拦截验证 URL: {self._captcha_verification_url[:120]}...")
+                        break
 
             data = (result_json or {}).get("data") or {}
             if isinstance(data, dict):
@@ -595,7 +618,7 @@ class GoofishCompassService:
                 max_retries=3,
                 allow_manual=not bool(self.config.headless),
             )
-            if not captcha_ok:
+            if not captcha_ok[0]:
                 return {"detail_error": "captcha_failed"}
 
             # After captcha, some pages re-trigger API calls.
@@ -740,7 +763,7 @@ class GoofishCompassService:
                 max_retries=3,
                 allow_manual=not bool(self.config.headless),
             )
-            if not captcha_ok:
+            if not captcha_ok[0]:
                 return {"error": "captcha_failed", "items": [], "total": 0}
 
             # 逐页采集
@@ -899,7 +922,7 @@ class GoofishCompassService:
                 max_retries=3,
                 allow_manual=not bool(self.config.headless),
             )
-            if not captcha_ok:
+            if not captcha_ok[0]:
                 return {"items": [], "total": 0, "error": "滑块验证失败"}
 
             # 逐页采集
@@ -936,6 +959,144 @@ class GoofishCompassService:
             logger.error(f"按卖家采集失败: {e}")
             return {"items": [], "total": 0, "error": str(e)}
 
+    # ==================== 搜索风控辅助方法 ====================
+
+    async def _export_and_update_cookies(self, slider_cookies: str = "") -> None:
+        """视觉滑块通过后，导出浏览器 cookies 并更新数据库。
+
+        优先使用 slider_handler 返回的 cookies（来自 browser context），
+        如果为空则从 self.browser.context 重新导出。
+        """
+        try:
+            cookies_str = slider_cookies
+            if not cookies_str and self.browser.context:
+                cookies_str = await self.browser.export_cookies()
+
+            if not cookies_str:
+                return
+
+            # 检查是否包含 x5sec
+            from common.utils.xianyu_utils import trans_cookies
+            cookies_dict = trans_cookies(cookies_str)
+            has_x5sec = any(
+                k.lower().startswith("x5") or "x5sec" in k.lower()
+                for k in cookies_dict
+            )
+            if not has_x5sec:
+                logger.info("视觉滑块通过但浏览器未获取到 x5sec cookie，跳过 DB 更新")
+                return
+
+            # 更新 self.cookie_value 供后续使用
+            self.cookie_value = cookies_str
+
+            # 更新数据库
+            from common.utils.cookie_refresh import update_account_cookies_in_db
+            success = await update_account_cookies_in_db(
+                self.user_id, cookies_str
+            )
+            if success:
+                logger.info(f"✅ 视觉滑块通过后 cookies 已更新到数据库 (user_id={self.user_id})")
+            else:
+                logger.warning(f"视觉滑块通过后 cookies 更新数据库失败 (user_id={self.user_id})")
+        except Exception as e:
+            logger.warning(f"导出/更新 cookies 异常: {e}")
+
+    async def _handle_search_captcha_with_fallback(self) -> bool:
+        """搜索 API 被风控拦截时，调用 run_slider_verification_with_fallback 解除。
+
+        流程：
+        1. 调用 run_slider_verification_with_fallback 打开独立浏览器解决滑块
+        2. 获取 x5sec cookies
+        3. 更新数据库
+        4. 将新 cookies 设置到当前搜索浏览器 context
+        5. 更新 self.cookie_value
+
+        Returns:
+            bool: 是否成功获取到新的 x5sec cookies
+        """
+        verification_url = self._captcha_verification_url
+
+        # 如果没有从 API 响应中获取到 URL，尝试从当前页面 URL 提取
+        if not verification_url and self.browser.page:
+            current_url = self.browser.page.url
+            if "punish" in current_url and "x5secdata" in current_url:
+                verification_url = current_url
+                logger.info(f"📋 从当前页面 URL 提取验证链接")
+
+        if not verification_url:
+            logger.warning("搜索被拦截但未获取到验证 URL，无法走 fallback")
+            return False
+
+        logger.info(f"🔍 搜索被风控拦截，调用 fallback 滑块验证: {verification_url[:120]}...")
+
+        try:
+            from common.services.captcha.orchestrator import run_slider_verification_with_fallback
+
+            # 获取 headless 配置
+            headless = self.config.headless
+
+            # 在独立线程中运行同步的滑块验证（会打开独立浏览器）
+            success, cookies, engine = await asyncio.to_thread(
+                run_slider_verification_with_fallback,
+                self.user_id,
+                verification_url,
+                True,        # enable_learning
+                headless,    # headless
+                20,          # browser_timeout
+                self.cookie_value,  # existing_cookies_str
+            )
+
+            if not success or not cookies:
+                logger.error(f"❌ Fallback 滑块验证失败 (engine={engine})")
+                return False
+
+            # 检查是否有 x5sec
+            has_x5sec = any(
+                k.lower().startswith("x5") or "x5sec" in k.lower()
+                for k in cookies
+            )
+            if not has_x5sec:
+                logger.error(f"❌ Fallback 滑块通过但未获取到 x5sec cookie (engine={engine})")
+                return False
+
+            logger.info(f"✅ Fallback 滑块验证成功 (engine={engine})，获取到 {len(cookies)} 个 cookies")
+
+            # 合并 cookies（保留原有非 x5 的 cookies，覆盖 x5 相关的）
+            from common.utils.xianyu_utils import trans_cookies
+            current_cookies = trans_cookies(self.cookie_value) if self.cookie_value else {}
+            for k, v in cookies.items():
+                k_lower = k.lower()
+                if k_lower.startswith("x5") or "x5sec" in k_lower:
+                    current_cookies[k] = v
+
+            new_cookies_str = "; ".join(f"{k}={v}" for k, v in current_cookies.items())
+
+            # 更新数据库
+            from common.utils.cookie_refresh import update_account_cookies_in_db
+            db_ok = await update_account_cookies_in_db(
+                self.user_id, new_cookies_str
+            )
+            if db_ok:
+                logger.info(f"✅ Fallback 后 cookies 已更新到数据库")
+            else:
+                logger.warning(f"Fallback 后 cookies 更新数据库失败")
+
+            # 更新内存中的 cookie_value
+            self.cookie_value = new_cookies_str
+
+            # 将新 cookies 设置到当前搜索浏览器 context
+            if self.browser.context:
+                await self.browser.set_cookies(new_cookies_str)
+                logger.info(f"✅ 新 cookies 已设置到搜索浏览器 context")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Fallback 滑块验证异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+
     async def search(
         self,
         *,
@@ -963,6 +1124,7 @@ class GoofishCompassService:
             self._api_total_available = None
             self._search_response_seen = False
             self._search_error = None
+            self._captcha_verification_url = None
 
             await self.browser.navigate_to("https://www.goofish.com", timeout=self.config.navigation_timeout_ms)
             await self.browser.set_cookies(self.cookie_value)
@@ -984,14 +1146,40 @@ class GoofishCompassService:
             await self._collect_search_responses(timeout_ms=min(3000, int(self.config.network_idle_timeout_ms)))
             await asyncio.sleep(2)
 
-            captcha_ok = await self.slider_handler.handle_verification(
+            captcha_ok, slider_cookies = await self.slider_handler.handle_verification(
                 page=self.browser.page,
                 context=self.browser.context,
                 max_retries=5,
                 allow_manual=not bool(self.config.headless),
             )
             if not captcha_ok:
-                return {"items": [], "total": 0, "error": "滑块验证失败（建议在账号管理中开启“显示浏览器”后重试）"}
+                return {"items": [], "total": 0, "error": "滑块验证失败（建议在账号管理中开启'显示浏览器'后重试）"}
+
+            # 视觉滑块通过后，导出浏览器 cookies 并更新 DB（保持 x5sec 同步）
+            await self._export_and_update_cookies(slider_cookies)
+
+            # 搜索 API 被风控拦截 → 走 run_slider_verification_with_fallback 重试
+            if self._captcha_verification_url and not self._items:
+                retry_ok = await self._handle_search_captcha_with_fallback()
+                if retry_ok:
+                    # fallback 成功后，重置状态并重新搜索
+                    self._items = []
+                    self._api_total_available = None
+                    self._search_response_seen = False
+                    self._search_error = None
+                    self._captcha_verification_url = None
+
+                    if self.browser.page:
+                        await self.browser.page.reload()
+                    await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
+
+                    search_input = await self._find_search_input()
+                    if search_input:
+                        await search_input.fill(keyword.strip())
+                        await self.browser.click('button[type="submit"]')
+                        await self.browser.wait_for_network_idle(timeout=self.config.network_idle_timeout_ms)
+                        await self._collect_search_responses(timeout_ms=min(3000, int(self.config.network_idle_timeout_ms)))
+                        await asyncio.sleep(2)
 
             # jump to start_page
             current_page = 1
