@@ -46,4 +46,4 @@ ENV PYTHONPATH=/app
 ENV TZ=Asia/Shanghai
 
 # 启动服务
-CMD ["xvfb-run", "--server-args=-screen 0 1920x1080x24", "python", "backend-web/main.py"]
+CMD ["xvfb-run", "python", "backend-web/main.py"]
