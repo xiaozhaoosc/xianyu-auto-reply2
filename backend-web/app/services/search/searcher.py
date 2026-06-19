@@ -343,6 +343,16 @@ class ItemSearchService:
                     search_input = await self._find_search_input()
 
             if not search_input:
+                if self.browser.page:
+                    current_url = self.browser.page.url
+                    logger.error(f"❌ 寻找搜索框失败，当前页面 URL: {current_url}")
+                    try:
+                        import os
+                        os.makedirs("static", exist_ok=True)
+                        await self.browser.page.screenshot(path="static/search_error_screenshot.png")
+                        logger.error("📸 错误页面已截图保存至 static/search_error_screenshot.png")
+                    except Exception as se:
+                        logger.error(f"❌ 错误页面截图失败: {se}")
                 raise Exception("未找到搜索框元素")
 
             await search_input.fill(keyword)
@@ -463,6 +473,16 @@ class ItemSearchService:
                     search_input = await self._find_search_input()
 
             if not search_input:
+                if self.browser.page:
+                    current_url = self.browser.page.url
+                    logger.error(f"❌ 寻找搜索框失败，当前页面 URL: {current_url}")
+                    try:
+                        import os
+                        os.makedirs("static", exist_ok=True)
+                        await self.browser.page.screenshot(path="static/search_error_screenshot.png")
+                        logger.error("📸 错误页面已截图保存至 static/search_error_screenshot.png")
+                    except Exception as se:
+                        logger.error(f"❌ 错误页面截图失败: {se}")
                 raise Exception("未找到搜索框元素")
 
             await search_input.fill(keyword)
