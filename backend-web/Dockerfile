@@ -23,12 +23,13 @@ deps = tomllib.load(open('/app/backend-web/pyproject.toml','rb')).get('project',
 open('/tmp/requirements.txt','w').write('\n'.join(deps))" && \
     pip install --no-cache-dir -r /tmp/requirements.txt
 
+# 安装Playwright浏览器（--with-deps 自动安装系统依赖）
+RUN python -m playwright install --with-deps chromium
+
 # 复制项目源码
 COPY common /app/common
 COPY backend-web /app/backend-web
 COPY launcher /app/launcher
-
-RUN python -m playwright install --with-deps chromium
 
 # 创建日志目录
 RUN mkdir -p /app/backend-web/logs /app/static/uploads
