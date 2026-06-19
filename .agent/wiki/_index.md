@@ -13,8 +13,10 @@
 
 ## 🎯 当前核心任务
 - [x] 克隆项目仓库 (使用 SSH `git@github.com:xiaozhaoosc/xianyu-auto-reply2.git`)
-- [ ] 项目自检与环境配置 (MySQL, Redis, Python 依赖安装)
-- [ ] 验证服务启动与可用性
+- [x] 项目自检与环境配置 (MySQL, Redis, Python 依赖安装)
+- [x] 验证服务启动与可用性
+- [x] 商品采集与搜索滑块风控调优
+- [x] 解决并发浏览器占用与锁冲突 (ADR-005)
 
 ## 📖 Wiki 导航
 - [每日日志 (JOURNAL.md)](file:///D:/IdeaProjects/xianyu-auto-reply2/.agent/wiki/JOURNAL.md)

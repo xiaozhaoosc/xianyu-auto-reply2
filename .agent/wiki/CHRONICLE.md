@@ -40,3 +40,10 @@
   - **搜索重试逻辑**: 在发送搜索请求时引入 3 次重试循环，滑块通过且 cookie 同步后，在当前页面上重新提交搜索以成功获取数据。
 
 
+
+## 📌 2026-06-19 — 浏览器 Profile 锁冲突与并发自愈机制 (ADR-005)
+- **事件**: 解决了高并发采集场景下或容器异常强杀后，由于多个浏览器实例试图同时占用同一个持久化缓存目录 `/tmp/xianyu_browser_cache`，导致 Chromium 报 `Opening in existing browser session. This usually means that the profile is already in use by another instance of Chromium` 并锁死的问题。
+- **架构决策**:
+  - **前置清理机制**：在 `init_browser` 启动持久化上下文前，前置检测并清理可能残留的 `SingletonLock` 文件或软链接。
+  - **锁冲突自愈降级**：捕获 Playwright 启动时的锁占用冲突，如果被占用，在重试中自动切换至带 UUID 后缀的临时隔离目录 `/tmp/xianyu_browser_cache_{uuid}` 并重新启动。这保证了并发采集的绝对成功。
+  - **零泄露临时垃圾回收**：在 `close_browser` 关闭浏览器时，如果当前实例使用的是带 UUID 的临时隔离目录，则主动调用 `shutil.rmtree` 强制擦除该目录。这成功实现了对系统磁盘资源的完美保护，杜绝了容器垃圾泄露风险。
