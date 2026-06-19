@@ -192,47 +192,6 @@ def get_stealth_script(browser_features: Dict[str, Any]) -> str:
         delete window.emit;
         delete window.spawn;
         
-        // Canvas指纹随机化
-        const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-        HTMLCanvasElement.prototype.toDataURL = function() {{
-            const context = this.getContext('2d');
-            if (context) {{
-                const imageData = context.getImageData(0, 0, this.width, this.height);
-                const data = imageData.data;
-                for (let i = 0; i < data.length; i += 4) {{
-                    if (Math.random() < 0.001) {{
-                        data[i] = Math.floor(Math.random() * 256);
-                    }}
-                }}
-                context.putImageData(imageData, 0, 0);
-            }}
-            return originalToDataURL.apply(this, arguments);
-        }};
-        
-        // 音频指纹随机化
-        const originalGetChannelData = AudioBuffer.prototype.getChannelData;
-        AudioBuffer.prototype.getChannelData = function(channel) {{
-            const data = originalGetChannelData.call(this, channel);
-            for (let i = 0; i < data.length; i += 1000) {{
-                if (Math.random() < 0.01) {{
-                    data[i] += Math.random() * 0.0001;
-                }}
-            }}
-            return data;
-        }};
-        
-        // WebGL指纹随机化
-        const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-        WebGLRenderingContext.prototype.getParameter = function(parameter) {{
-            if (parameter === 37445) {{ // UNMASKED_VENDOR_WEBGL
-                return 'Intel Inc.';
-            }}
-            if (parameter === 37446) {{ // UNMASKED_RENDERER_WEBGL
-                return 'Intel Iris OpenGL Engine';
-            }}
-            return originalGetParameter.call(this, parameter);
-        }};
-        
         // 增强鼠标移动轨迹记录
         let mouseMovements = [];
         let lastMouseTime = Date.now();
