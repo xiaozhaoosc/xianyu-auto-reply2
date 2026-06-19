@@ -318,14 +318,12 @@ class ItemSearchService:
 
             logger.info(f"使用账户: {cookie_data.get('id', 'unknown')}")
 
-            # 访问闲鱼首页
-            await self.browser.navigate_to("https://www.goofish.com")
+            # 先设置cookies到浏览器context中，确保导航时携带有效的身份认证
             await self.browser.set_cookies(cookie_data.get('value', ''))
 
-            # 刷新页面应用cookies
-            if self.browser.page:
-                await self.browser.page.reload()
-                await asyncio.sleep(2)
+            # 访问闲鱼首页
+            await self.browser.navigate_to("https://www.goofish.com")
+            await asyncio.sleep(2)
 
             await self.browser.wait_for_network_idle(timeout=10000)
 
@@ -450,13 +448,12 @@ class ItemSearchService:
             if not cookie_data:
                 raise Exception("未找到有效的cookies账户")
 
-            # 访问闲鱼首页
-            await self.browser.navigate_to("https://www.goofish.com")
+            # 先设置cookies到浏览器context中，确保导航时携带有效的身份认证
             await self.browser.set_cookies(cookie_data.get('value', ''))
 
-            if self.browser.page:
-                await self.browser.page.reload()
-                await asyncio.sleep(2)
+            # 访问闲鱼首页
+            await self.browser.navigate_to("https://www.goofish.com")
+            await asyncio.sleep(2)
 
             await self.browser.wait_for_network_idle(timeout=15000)
 
