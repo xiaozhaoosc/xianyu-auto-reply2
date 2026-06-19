@@ -553,18 +553,8 @@ class PlaywrightSliderService:
             except Exception:
                 pass
             
-            # 尝试通过 Playwright API 关闭
-            try:
-                if hasattr(self, 'context') and self.context:
-                    self.context.close()
-                elif hasattr(self, 'browser') and self.browser:
-                    self.browser.close()
-                logger.info(f"【{self.pure_user_id}】超时守护：浏览器已通过API关闭")
-                return
-            except Exception as e:
-                logger.warning(f"【{self.pure_user_id}】超时关闭浏览器API调用失败: {e}")
-            
-            # 兜底：通过PID强制杀掉浏览器进程树
+            # 【安全设计】禁止在子线程中调用任何 Playwright 对象的 API（如 context.close()），以避免 greenlet 跨线程切换崩溃。
+            # 直接使用 PID 强杀进程。连接断开后，主线程中被阻塞的 Playwright 调用会立即抛出异常并在 finally 块安全清理。
             if browser_pid:
                 try:
                     import subprocess
@@ -577,9 +567,11 @@ class PlaywrightSliderService:
                     else:
                         import signal
                         os.killpg(os.getpgid(browser_pid), signal.SIGKILL)
-                    logger.info(f"【{self.pure_user_id}】超时守护：已强制终止浏览器进程 PID={browser_pid}")
+                    logger.info(f"【{self.pure_user_id}】超时守护：已通过强杀 PID={browser_pid} 强制终止浏览器")
                 except Exception as kill_e:
-                    logger.warning(f"【{self.pure_user_id}】强制杀进程失败: {kill_e}")
+                    logger.warning(f"【{self.pure_user_id}】超时强杀进程失败: {kill_e}")
+            else:
+                logger.warning(f"【{self.pure_user_id}】超时守护：未获取到浏览器进程 PID，无法强杀")
         
         try:
             # 初始化浏览器

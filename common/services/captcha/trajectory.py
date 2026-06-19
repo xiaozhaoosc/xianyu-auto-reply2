@@ -45,8 +45,9 @@ class TrajectoryGenerator:
         self.trajectory_params = {
             # 总步数 5~6；7步失败率过高，排除
             "total_steps_range": [5, 6],
-            # 内部 sleep 10~20ms，确保不像机器人
-            "total_duration_range": [0.010, 0.020],
+            # 物理滑动总耗时范围设为 0.25 到 0.45 秒（250ms ~ 450ms）
+            # 结合步数 5~6 步，平均每步 sleep 40ms~90ms 之间，契合真人滑动节奏
+            "total_duration_range": [0.25, 0.45],
             # 阶段比例：加速 35% / 匀速 35% / 减速 30%
             "accel_ratio": 0.35,
             "const_ratio": 0.35,
