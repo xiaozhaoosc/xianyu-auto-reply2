@@ -34,6 +34,10 @@ COPY launcher /app/launcher
 # 创建日志目录
 RUN mkdir -p /app/backend-web/logs /app/static/uploads
 
+# 安装 xvfb-run 必需的 xauth 工具
+RUN apt-get update && apt-get install -y xauth && rm -rf /var/lib/apt/lists/*
+
+
 # 暴露端口
 EXPOSE 8089
 
