@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, UploadFile, File, Form, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 
 from app.api import deps
@@ -1122,7 +1123,7 @@ async def update_crawler_cookie(
     account_id: str,
     payload: CrawlerCookieUpdate,
     current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    session=Depends(deps.get_db_session),
 ):
     """
     导入/更新采集专用Cookie
@@ -1133,12 +1134,12 @@ async def update_crawler_cookie(
 
     导入后采集功能自动使用此Cookie，不影响聊天连接。
     """
-    from common.models.xy_account import XYAccount
+    from loguru import logger
 
     stmt = select(XYAccount).where(XYAccount.account_id == account_id)
     if not current_user.is_admin:
         stmt = stmt.where(XYAccount.owner_id == current_user.id)
-    result = await db.execute(stmt)
+    result = await session.execute(stmt)
     account = result.scalar_one_or_none()
 
     if not account:
@@ -1150,7 +1151,7 @@ async def update_crawler_cookie(
         return ApiResponse(success=False, message="Cookie格式异常，长度过短")
 
     account.crawler_cookie = cookie_str
-    await db.commit()
+    await session.commit()
 
     logger.info(f"✅ 账号 {account_id} 采集Cookie已更新，长度={len(cookie_str)}")
     return ApiResponse(
@@ -1164,22 +1165,20 @@ async def update_crawler_cookie(
 async def clear_crawler_cookie(
     account_id: str,
     current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    session=Depends(deps.get_db_session),
 ):
     """清除采集专用Cookie（清除后采集功能回退使用聊天Cookie）"""
-    from common.models.xy_account import XYAccount
-
     stmt = select(XYAccount).where(XYAccount.account_id == account_id)
     if not current_user.is_admin:
         stmt = stmt.where(XYAccount.owner_id == current_user.id)
-    result = await db.execute(stmt)
+    result = await session.execute(stmt)
     account = result.scalar_one_or_none()
 
     if not account:
         return ApiResponse(success=False, message="账号不存在或无权限")
 
     account.crawler_cookie = None
-    await db.commit()
+    await session.commit()
 
     return ApiResponse(success=True, message="采集Cookie已清除，采集功能将回退使用聊天Cookie")
 
@@ -1188,15 +1187,13 @@ async def clear_crawler_cookie(
 async def get_crawler_cookie_status(
     account_id: str,
     current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    session=Depends(deps.get_db_session),
 ):
     """查看采集Cookie状态（不返回完整Cookie，仅返回是否存在及长度）"""
-    from common.models.xy_account import XYAccount
-
     stmt = select(XYAccount).where(XYAccount.account_id == account_id)
     if not current_user.is_admin:
         stmt = stmt.where(XYAccount.owner_id == current_user.id)
-    result = await db.execute(stmt)
+    result = await session.execute(stmt)
     account = result.scalar_one_or_none()
 
     if not account:
