@@ -33,7 +33,7 @@ services:
       - SCHEDULER_SERVICE_URL=http://scheduler:8091
       - STATIC_DIR=/app/static
       - BACKUP_DIR=/app/backups
-      - BROWSER_HEADLESS=false
+      - BROWSER_HEADLESS=${BROWSER_HEADLESS:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SQL_ECHO=${SQL_ECHO:-true}
       - TZ=${TZ:-Asia/Shanghai}

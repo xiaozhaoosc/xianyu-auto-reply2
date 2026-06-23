@@ -316,9 +316,9 @@ class SliderHandler:
                     return 300;
                 }
             """)
-            # 刮刮乐仅需滑开 25% - 35% 的距离露出涂层验证码即可，切勿拖到最右边
+            # 刮刮乐必须滑到 92-100% 才能完全刮开遮罩露出验证码图片
             button_width = button_box.get('width', 30)
-            scratch_ratio = random.uniform(0.25, 0.35)
+            scratch_ratio = random.uniform(0.92, 1.0)
             slide_distance = (estimated_track_width - button_width) * scratch_ratio
 
             logger.warning(f"🎨 刮刮乐模式：计划滑动{scratch_ratio*100:.1f}%距离 ({slide_distance:.2f}px)，滑轨宽度={estimated_track_width}px")

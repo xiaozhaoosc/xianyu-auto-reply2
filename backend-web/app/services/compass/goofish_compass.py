@@ -223,11 +223,13 @@ class GoofishCompassService:
     async def _handle_verification_and_sync_cookies(
         self,
         max_retries: int = 5,
-        page: Optional[Page] = None
+        page: Optional[Page] = None,
+        scene: str = "采集"
     ) -> bool:
         """
         通用滑块及拦截验证处理，自动从 Playwright 导出 cookies 并同步数据库。
         """
+        import time as _time
         target_page = page or self.browser.page
         if not target_page:
             return True
@@ -261,7 +263,25 @@ class GoofishCompassService:
 
         logger.warning(f"⚠️ 检测到安全拦截或滑块验证（{detected_selector}），开始处理...")
 
+        # 记录风控日志
+        _captcha_start_time = _time.time()
+        _risk_log_id = None
+        _verification_trigger_url = v_url or getattr(target_page, "url", "unknown")
+        try:
+            from common.db.compat import db_manager
+            _risk_log_id = db_manager.add_risk_control_log(
+                cookie_id=str(self.user_id),
+                event_type='slider_captcha',
+                event_description=f'触发场景: {scene}, URL: {_verification_trigger_url}',
+                processing_status='processing'
+            )
+            if _risk_log_id:
+                logger.info(f"风控日志记录成功，ID: {_risk_log_id}")
+        except Exception as log_e:
+            logger.error(f"记录风控日志失败: {log_e}")
+
         captcha_ok = False
+        captcha_engine_label = None
         new_cookies_dict = None
 
         # 优先通过验证 URL 调用统一 fallback 滑块引擎
@@ -281,6 +301,7 @@ class GoofishCompassService:
                 if success and cookies:
                     captcha_ok = True
                     new_cookies_dict = cookies
+                    captcha_engine_label = f"兜底引擎(DrissionPage)" if captcha_engine == "drissionpage" else "主引擎(Playwright)"
                     logger.success(f"✅ 通过 run_slider_verification_with_fallback 验证成功（引擎: {captcha_engine}）")
             except Exception as e:
                 logger.error(f"❌ 调用 run_slider_verification_with_fallback 发生异常: {e}")
@@ -296,12 +317,35 @@ class GoofishCompassService:
                     max_retries=max_retries,
                     allow_manual=not bool(self.config.headless),
                 )
+                if captcha_ok:
+                    captcha_engine_label = "页面内Playwright"
                 if captcha_ok and self.browser.context:
                     try:
                         page_cookies = await self.browser.context.cookies()
                         new_cookies_dict = {c["name"]: c["value"] for c in page_cookies}
                     except Exception as e:
                         logger.error(f"❌ 从当前页面 context 提取 cookies 异常: {e}")
+
+        # 更新风控日志
+        _captcha_duration = _time.time() - _captcha_start_time
+        if _risk_log_id:
+            try:
+                from common.db.compat import db_manager
+                if captcha_ok:
+                    db_manager.update_risk_control_log(
+                        log_id=_risk_log_id,
+                        processing_status='success',
+                        captcha_engine=captcha_engine_label or 'unknown',
+                        processing_result=f'滑块验证成功（{captcha_engine_label}），耗时: {_captcha_duration:.2f}秒'
+                    )
+                else:
+                    db_manager.update_risk_control_log(
+                        log_id=_risk_log_id,
+                        processing_status='failed',
+                        processing_result=f'滑块验证失败，耗时: {_captcha_duration:.2f}秒'
+                    )
+            except Exception as update_e:
+                logger.error(f"更新风控日志失败: {update_e}")
 
         if not captcha_ok:
             logger.error("❌ 验证码处理失败，无法继续")
@@ -815,7 +859,8 @@ class GoofishCompassService:
 
             captcha_ok = await self._handle_verification_and_sync_cookies(
                 max_retries=3,
-                page=page
+                page=page,
+                scene="商品详情采集"
             )
             if not captcha_ok:
                 return {"detail_error": "captcha_failed"}
@@ -956,7 +1001,8 @@ class GoofishCompassService:
             await asyncio.sleep(2)
 
             captcha_ok = await self._handle_verification_and_sync_cookies(
-                max_retries=3
+                max_retries=3,
+                scene="按卖家采集(userId)"
             )
             if not captcha_ok:
                 return {"error": "captcha_failed", "items": [], "total": 0}
@@ -1111,7 +1157,8 @@ class GoofishCompassService:
             await asyncio.sleep(3)
 
             captcha_ok = await self._handle_verification_and_sync_cookies(
-                max_retries=3
+                max_retries=3,
+                scene="按卖家采集"
             )
             if not captcha_ok:
                 return {"items": [], "total": 0, "error": "滑块验证失败"}
@@ -1208,7 +1255,7 @@ class GoofishCompassService:
                 await asyncio.sleep(2)
 
                 # 处理可能出现的滑块并更新 Cookie 到数据库与浏览器
-                captcha_ok = await self._handle_verification_and_sync_cookies(max_retries=5)
+                captcha_ok = await self._handle_verification_and_sync_cookies(max_retries=5, scene="指南针搜索")
                 if not captcha_ok:
                     return {"items": [], "total": 0, "error": "滑块验证失败（建议在账号管理中开启“显示浏览器”后重试）"}
 

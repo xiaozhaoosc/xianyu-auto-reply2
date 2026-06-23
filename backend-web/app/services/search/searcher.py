@@ -143,11 +143,13 @@ class ItemSearchService:
     async def _handle_verification_and_sync_cookies(
         self,
         max_retries: int = 5,
-        page: Optional[Page] = None
+        page: Optional[Page] = None,
+        scene: str = "搜索"
     ) -> bool:
         """
         通用滑块及拦截验证处理，自动从 Playwright 导出 cookies 并同步数据库。
         """
+        import time as _time
         target_page = page or self.browser.page
         if not target_page:
             return True
@@ -181,7 +183,25 @@ class ItemSearchService:
 
         logger.warning(f"⚠️ 搜索流检测到安全拦截或滑块验证（{detected_selector}），开始处理...")
 
+        # 记录风控日志
+        _captcha_start_time = _time.time()
+        _risk_log_id = None
+        _verification_trigger_url = v_url or getattr(target_page, "url", "unknown")
+        try:
+            from common.db.compat import db_manager
+            _risk_log_id = db_manager.add_risk_control_log(
+                cookie_id=str(self.user_id),
+                event_type='slider_captcha',
+                event_description=f'触发场景: {scene}, URL: {_verification_trigger_url}',
+                processing_status='processing'
+            )
+            if _risk_log_id:
+                logger.info(f"风控日志记录成功，ID: {_risk_log_id}")
+        except Exception as log_e:
+            logger.error(f"记录风控日志失败: {log_e}")
+
         captcha_ok = False
+        captcha_engine_label = None
         new_cookies_dict = None
 
         # 优先通过验证 URL 调用统一 fallback 滑块引擎
@@ -203,6 +223,7 @@ class ItemSearchService:
                 if success and cookies:
                     captcha_ok = True
                     new_cookies_dict = cookies
+                    captcha_engine_label = f"兜底引擎(DrissionPage)" if captcha_engine == "drissionpage" else "主引擎(Playwright)"
                     logger.success(f"✅ 通过 run_slider_verification_with_fallback 验证成功（引擎: {captcha_engine}）")
             except Exception as e:
                 logger.error(f"❌ 调用 run_slider_verification_with_fallback 发生异常: {e}")
@@ -216,14 +237,37 @@ class ItemSearchService:
                     page=target_page,
                     context=self.browser.context,
                     max_retries=max_retries,
-                    allow_manual=True,
+                    allow_manual=False,  # 无头模式下禁用人工操作，避免无限等待
                 )
+                if captcha_ok:
+                    captcha_engine_label = "页面内Playwright"
                 if captcha_ok and self.browser.context:
                     try:
                         page_cookies = await self.browser.context.cookies()
                         new_cookies_dict = {c["name"]: c["value"] for c in page_cookies}
                     except Exception as e:
                         logger.error(f"❌ 从当前页面 context 提取 cookies 异常: {e}")
+
+        # 更新风控日志
+        _captcha_duration = _time.time() - _captcha_start_time
+        if _risk_log_id:
+            try:
+                from common.db.compat import db_manager
+                if captcha_ok:
+                    db_manager.update_risk_control_log(
+                        log_id=_risk_log_id,
+                        processing_status='success',
+                        captcha_engine=captcha_engine_label or 'unknown',
+                        processing_result=f'滑块验证成功（{captcha_engine_label}），耗时: {_captcha_duration:.2f}秒'
+                    )
+                else:
+                    db_manager.update_risk_control_log(
+                        log_id=_risk_log_id,
+                        processing_status='failed',
+                        processing_result=f'滑块验证失败，耗时: {_captcha_duration:.2f}秒'
+                    )
+            except Exception as update_e:
+                logger.error(f"更新风控日志失败: {update_e}")
 
         if not captcha_ok:
             logger.error("❌ 验证码处理失败，无法继续")
