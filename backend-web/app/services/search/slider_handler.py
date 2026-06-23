@@ -14,7 +14,7 @@ from typing import Any, Optional
 from loguru import logger
 
 try:
-    from playwright.async_api import Page, BrowserContext
+    from playwright.async_api import Page, BrowserContext, Frame
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -214,8 +214,8 @@ class SliderHandler:
                 else:
                     await asyncio.sleep(0.5)
 
-                # 查找滑块按钮
-                slider_button = await self._find_slider_button(page)
+                # 查找滑块按钮及其所在frame
+                slider_button, target_frame = await self._find_slider_button_with_frame(page)
                 if not slider_button:
                     logger.error("❌ 未找到刮刮乐滑块按钮")
                     await asyncio.sleep(random.uniform(0.5, 1))
@@ -229,14 +229,16 @@ class SliderHandler:
                         logger.error("❌ 无法获取滑块按钮位置")
                         continue
 
-                # 执行滑动
-                success = await self._perform_slide(page, button_box)
+                # 执行滑动（传入frame以便从iframe内获取滑轨宽度）
+                success = await self._perform_slide(page, button_box, iframe_frame=target_frame)
                 if success:
                     # 检查是否成功
-                    await asyncio.sleep(0.8)
+                    await asyncio.sleep(1.0)  # 增加等待时间，给服务器更多验证时间
                     if await self._check_captcha_passed(page):
                         logger.success(f"✅ 刮刮乐验证成功！（第{attempt}次尝试）")
                         return True
+                    else:
+                        logger.warning(f"⚠️ 第{attempt}次滑动后验证未通过，准备重试...")
 
             except Exception as e:
                 logger.error(f"❌ 刮刮乐处理异常: {str(e)}")
@@ -246,18 +248,26 @@ class SliderHandler:
         return False
 
     async def _find_slider_button(self, page: Page):
-        """查找滑块按钮"""
+        """查找滑块按钮（兼容旧接口）"""
+        button, _ = await self._find_slider_button_with_frame(page)
+        return button
+
+    async def _find_slider_button_with_frame(self, page: Page):
+        """查找滑块按钮，同时返回所在frame（用于iframe场景获取正确的滑轨宽度）"""
+        target_frame = page.main_frame
+
+        # 先在主页面查找
         for selector in self.SCRATCH_BUTTON_SELECTORS:
             try:
                 button = await page.wait_for_selector(selector, timeout=800, state='visible')
                 if button:
                     logger.info(f"✅ 找到刮刮乐滑块按钮: {selector}")
-                    return button
+                    return button, target_frame
             except Exception:
                 try:
                     button = await page.wait_for_selector(selector, timeout=300, state='attached')
                     if button:
-                        return button
+                        return button, target_frame
                 except Exception:
                     continue
 
@@ -272,13 +282,13 @@ class SliderHandler:
                         button = await frame.wait_for_selector(selector, timeout=500, state='visible')
                         if button:
                             logger.info(f"✅ 在iframe中找到滑块按钮: {selector}")
-                            return button
+                            return button, frame
                     except Exception:
                         continue
         except Exception:
             pass
 
-        return None
+        return None, None
 
     async def _get_button_box_by_js(self, page: Page) -> Optional[dict]:
         """通过JavaScript获取按钮位置"""
@@ -299,29 +309,35 @@ class SliderHandler:
         except Exception:
             return None
 
-    async def _perform_slide(self, page: Page, button_box: dict) -> bool:
+    async def _perform_slide(self, page: Page, button_box: dict, iframe_frame: Optional[Any] = None) -> bool:
         """执行滑动操作"""
         try:
             # 刮刮乐需要滑到100%才能完全显示验证码
-            # 尝试获取实际滑轨宽度
-            estimated_track_width = await page.evaluate("""
-                () => {
-                    const container = document.querySelector('.scratch-captcha-slider') ||
-                                     document.querySelector('#nocaptcha') ||
-                                     document.querySelector('[class*="scratch-captcha"]');
-                    if (container) {
-                        const rect = container.getBoundingClientRect();
-                        return rect.width;
+            # 从正确的frame中获取滑轨宽度（iframe场景下从iframe内查询）
+            target_frame = iframe_frame or page.main_frame
+            try:
+                estimated_track_width = await target_frame.evaluate("""
+                    () => {
+                        const container = document.querySelector('.scratch-captcha-slider') ||
+                                         document.querySelector('#nocaptcha') ||
+                                         document.querySelector('[class*="scratch-captcha"]');
+                        if (container) {
+                            const rect = container.getBoundingClientRect();
+                            return rect.width;
+                        }
+                        return 300;
                     }
-                    return 300;
-                }
-            """)
+                """)
+            except Exception as e:
+                logger.warning(f"⚠️ 获取滑轨宽度失败，使用默认值: {e}")
+                estimated_track_width = 300
+
             # 刮刮乐必须滑到 92-100% 才能完全刮开遮罩露出验证码图片
             button_width = button_box.get('width', 30)
             scratch_ratio = random.uniform(0.92, 1.0)
             slide_distance = (estimated_track_width - button_width) * scratch_ratio
 
-            logger.warning(f"🎨 刮刮乐模式：计划滑动{scratch_ratio*100:.1f}%距离 ({slide_distance:.2f}px)，滑轨宽度={estimated_track_width}px")
+            logger.warning(f"🎨 刮刮乐模式：计划滑动{scratch_ratio*100:.1f}%距离 ({slide_distance:.2f}px)，滑轨宽度={estimated_track_width}px（来源: {'iframe' if iframe_frame else 'main'}）")
 
             start_x = button_box['x'] + button_box['width'] / 2
             start_y = button_box['y'] + button_box['height'] / 2
@@ -370,11 +386,13 @@ class SliderHandler:
 
             # 检查iframe中的滑块
             iframe_visible = False
+            iframe_found = False
             try:
                 for frame in page.frames:
                     if frame != page.main_frame:
                         captcha_in_iframe = await frame.query_selector('#nocaptcha')
                         if captcha_in_iframe:
+                            iframe_found = True
                             try:
                                 if await captcha_in_iframe.is_visible():
                                     iframe_visible = True
@@ -384,7 +402,10 @@ class SliderHandler:
             except Exception:
                 pass
 
-            return not main_visible and not iframe_visible
+            passed = not main_visible and not iframe_visible
+            if not passed:
+                logger.info(f"🔍 验证状态检查: 主页面visible={main_visible}, iframe找到={iframe_found}, iframevisible={iframe_visible}")
+            return passed
 
         except Exception as e:
             logger.warning(f"检查验证结果时出错: {e}")
