@@ -78,11 +78,14 @@ class ItemSearchService:
             account = result.scalars().first()
 
             if account and account.cookie and len(account.cookie) > 50:
-                logger.info(f"找到有效cookie: {account.account_id}")
-                self.cookie_value = account.cookie
+                # 优先使用采集专用Cookie（与聊天token独立）
+                effective_cookie = account.crawler_cookie if (account.crawler_cookie and len(account.crawler_cookie) > 50) else account.cookie
+                cookie_source = "crawler_cookie" if effective_cookie == account.crawler_cookie else "chat_cookie"
+                logger.info(f"找到有效cookie: {account.account_id}（来源: {cookie_source}）")
+                self.cookie_value = effective_cookie
                 return {
                     'id': account.account_id,
-                    'value': account.cookie
+                    'value': effective_cookie
                 }
 
             return None

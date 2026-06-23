@@ -270,11 +270,14 @@ async def run_once_job(
             job.last_error = "账号Cookie不可用"
             await db.commit()
             return {"success": False, "error": "账号Cookie不可用", "upserted": 0, "total": 0}
-        
+
         # 执行采集
         try:
             from app.services.compass.goofish_compass import GoofishCompassService, GoofishCompassConfig
-            
+
+            # 优先使用采集专用Cookie
+            effective_cookie = account.crawler_cookie if (account.crawler_cookie and len(account.crawler_cookie) > 50) else account.cookie
+
             config = GoofishCompassConfig(
                 headless=not account.show_browser,
                 detail_concurrency=3,
@@ -282,10 +285,10 @@ async def run_once_job(
                 network_idle_timeout_ms=15000,
                 detail_response_timeout_ms=7000,
             )
-            
+
             service = GoofishCompassService(
                 user_id=str(account.id),
-                cookie_value=account.cookie,
+                cookie_value=effective_cookie,
                 config=config,
                 db_session=db,
             )
@@ -488,6 +491,9 @@ async def fetch_by_seller(
 
         from app.services.compass.goofish_compass import GoofishCompassService, GoofishCompassConfig
 
+        # 优先使用采集专用Cookie
+        effective_cookie = account.crawler_cookie if (account.crawler_cookie and len(account.crawler_cookie) > 50) else account.cookie
+
         config = GoofishCompassConfig(
             headless=not account.show_browser,
             navigation_timeout_ms=30000,
@@ -496,7 +502,7 @@ async def fetch_by_seller(
 
         service = GoofishCompassService(
             user_id=str(account.id),
-            cookie_value=account.cookie,
+            cookie_value=effective_cookie,
             config=config,
             db_session=db,
         )
@@ -629,6 +635,9 @@ async def fetch_by_id(
 
         from app.services.compass.goofish_compass import GoofishCompassService, GoofishCompassConfig
 
+        # 优先使用采集专用Cookie
+        effective_cookie = account.crawler_cookie if (account.crawler_cookie and len(account.crawler_cookie) > 50) else account.cookie
+
         config = GoofishCompassConfig(
             headless=not account.show_browser,
             navigation_timeout_ms=30000,
@@ -638,7 +647,7 @@ async def fetch_by_id(
 
         service = GoofishCompassService(
             user_id=str(account.id),
-            cookie_value=account.cookie,
+            cookie_value=effective_cookie,
             config=config,
             db_session=db,
         )

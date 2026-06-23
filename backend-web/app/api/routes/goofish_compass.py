@@ -86,10 +86,11 @@ async def search_goofish(
             detail_response_timeout_ms=7000
         )
         
-        # 创建服务实例
+        # 创建服务实例（优先使用采集专用Cookie）
+        effective_cookie = cookie.crawler_cookie if (cookie.crawler_cookie and len(cookie.crawler_cookie) > 50) else cookie.cookie
         service = GoofishCompassService(
             user_id=str(cookie.id),
-            cookie_value=cookie.cookie,
+            cookie_value=effective_cookie,
             config=config,
             db_session=db
         )

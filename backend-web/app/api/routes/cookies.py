@@ -1106,3 +1106,109 @@ async def renew_account_login(
         message=f"批量续期完成：成功 {success_count} 个，失败 {failed_count} 个",
         data={"results": results, "success_count": success_count, "failed_count": failed_count},
     )
+
+
+# ──────────────────────────────────────────────
+# 采集专用 Cookie（与聊天 token 独立）
+# ──────────────────────────────────────────────
+
+class CrawlerCookieUpdate(BaseModel):
+    """导入/更新采集专用Cookie"""
+    crawler_cookie: str = Field(..., min_length=10, description="采集专用Cookie字符串")
+
+
+@router.put("/{account_id}/crawler-cookie", response_model=ApiResponse)
+async def update_crawler_cookie(
+    account_id: str,
+    payload: CrawlerCookieUpdate,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    导入/更新采集专用Cookie
+
+    采集Cookie与聊天Cookie完全独立：
+    - 聊天Cookie (cookie字段): 用于websocket消息收发
+    - 采集Cookie (crawler_cookie字段): 用于商品搜索/采集/罗盘
+
+    导入后采集功能自动使用此Cookie，不影响聊天连接。
+    """
+    from common.models.xy_account import XYAccount
+
+    stmt = select(XYAccount).where(XYAccount.account_id == account_id)
+    if not current_user.is_admin:
+        stmt = stmt.where(XYAccount.owner_id == current_user.id)
+    result = await db.execute(stmt)
+    account = result.scalar_one_or_none()
+
+    if not account:
+        return ApiResponse(success=False, message="账号不存在或无权限")
+
+    # 基本格式校验
+    cookie_str = payload.crawler_cookie.strip()
+    if len(cookie_str) < 50:
+        return ApiResponse(success=False, message="Cookie格式异常，长度过短")
+
+    account.crawler_cookie = cookie_str
+    await db.commit()
+
+    logger.info(f"✅ 账号 {account_id} 采集Cookie已更新，长度={len(cookie_str)}")
+    return ApiResponse(
+        success=True,
+        message="采集Cookie导入成功，采集/搜索功能将自动使用此Cookie",
+        data={"account_id": account_id, "cookie_length": len(cookie_str)},
+    )
+
+
+@router.delete("/{account_id}/crawler-cookie", response_model=ApiResponse)
+async def clear_crawler_cookie(
+    account_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """清除采集专用Cookie（清除后采集功能回退使用聊天Cookie）"""
+    from common.models.xy_account import XYAccount
+
+    stmt = select(XYAccount).where(XYAccount.account_id == account_id)
+    if not current_user.is_admin:
+        stmt = stmt.where(XYAccount.owner_id == current_user.id)
+    result = await db.execute(stmt)
+    account = result.scalar_one_or_none()
+
+    if not account:
+        return ApiResponse(success=False, message="账号不存在或无权限")
+
+    account.crawler_cookie = None
+    await db.commit()
+
+    return ApiResponse(success=True, message="采集Cookie已清除，采集功能将回退使用聊天Cookie")
+
+
+@router.get("/{account_id}/crawler-cookie", response_model=ApiResponse)
+async def get_crawler_cookie_status(
+    account_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看采集Cookie状态（不返回完整Cookie，仅返回是否存在及长度）"""
+    from common.models.xy_account import XYAccount
+
+    stmt = select(XYAccount).where(XYAccount.account_id == account_id)
+    if not current_user.is_admin:
+        stmt = stmt.where(XYAccount.owner_id == current_user.id)
+    result = await db.execute(stmt)
+    account = result.scalar_one_or_none()
+
+    if not account:
+        return ApiResponse(success=False, message="账号不存在或无权限")
+
+    has_crawler_cookie = bool(account.crawler_cookie and len(account.crawler_cookie) > 10)
+    return ApiResponse(
+        success=True,
+        data={
+            "account_id": account_id,
+            "has_crawler_cookie": has_crawler_cookie,
+            "crawler_cookie_length": len(account.crawler_cookie) if account.crawler_cookie else 0,
+            "chat_cookie_length": len(account.cookie) if account.cookie else 0,
+        },
+    )

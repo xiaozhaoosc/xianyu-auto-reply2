@@ -32,6 +32,7 @@ class XYAccount(TimestampMixin, Base):
     display_name: Mapped[str | None] = mapped_column(String(120))
     unb: Mapped[str | None] = mapped_column(String(64), index=True)
     cookie: Mapped[str] = mapped_column(Text, nullable=False)
+    crawler_cookie: Mapped[str | None] = mapped_column(Text, comment="采集专用Cookie（与聊天token独立）")
     login_method: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     username: Mapped[str | None] = mapped_column(String(120))
