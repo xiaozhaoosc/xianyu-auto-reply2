@@ -17,6 +17,8 @@ from common.services.account_cookie_service import merge_account_cookie_fields
 from common.services.captcha.concurrency import run_browser_task
 from common.services.captcha.slider_mode import (
     SLIDER_MODE_REAL_MOUSE,
+    load_manual_wait_seconds,
+    load_slider_notify_config,
     refresh_slider_mode_from_database,
 )
 from common.services.captcha.weighted_runner import real_mouse_weighted_runner
@@ -692,6 +694,8 @@ async def solve_captcha(request: SolveCaptchaRequest):
             safe_id, url, True, False, timeout, existing_cookies_str, url_provider,
         )
         selected_slider_mode = await refresh_slider_mode_from_database()
+        manual_wait_seconds = await load_manual_wait_seconds()
+        smtp_config, notify_email = await load_slider_notify_config()
         if selected_slider_mode == SLIDER_MODE_REAL_MOUSE:
             # 被调用方请求在线程池之前参与本地/远程实时加权排队。
             success, cookies, engine = await real_mouse_weighted_runner.submit(
@@ -700,6 +704,9 @@ async def solve_captcha(request: SolveCaptchaRequest):
                 *slider_args,
                 weight_class=weight_class,
                 slider_mode=selected_slider_mode,
+                manual_wait_seconds=manual_wait_seconds,
+                smtp_config=smtp_config,
+                notify_email=notify_email,
             )
         else:
             success, cookies, engine = await run_browser_task(
@@ -707,6 +714,9 @@ async def solve_captcha(request: SolveCaptchaRequest):
                 *slider_args,
                 weight_class=weight_class,
                 slider_mode=selected_slider_mode,
+                manual_wait_seconds=manual_wait_seconds,
+                smtp_config=smtp_config,
+                notify_email=notify_email,
             )
     except asyncio.CancelledError:
         cancelled_cookies = refetched_token_result.get("new_cookies")

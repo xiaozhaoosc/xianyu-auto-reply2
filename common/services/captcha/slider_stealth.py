@@ -23,6 +23,135 @@ from loguru import logger
 from common.services.captcha.concurrency import concurrency_manager, account_browser_lock_manager
 from common.services.captcha.strategy_stats import strategy_stats
 from common.services.captcha.browser_features import get_random_browser_features, get_stealth_script
+
+
+def _send_slider_manual_email(
+    smtp_server: str,
+    smtp_port: int,
+    email_user: str,
+    email_password: str,
+    recipient_email: str,
+    subject: str,
+    body: str,
+) -> bool:
+    """同步发送滑块人工验证通知邮件（在线程池中调用，不阻塞事件循环）。"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+
+        if not all([smtp_server, email_user, email_password, recipient_email]):
+            return False
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["From"] = email_user
+        msg["To"] = recipient_email
+        msg["Subject"] = subject
+
+        if smtp_port == 465:
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
+        else:
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+            if smtp_port != 587:
+                pass
+            else:
+                server.starttls()
+        server.login(email_user, email_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        logger.warning(f"滑块通知邮件发送失败: {e}")
+        return False
+
+
+def _send_slider_manual_feishu(webhook_url: str, secret: str, message: str) -> bool:
+    """同步发送滑块人工验证通知到飞书（在线程池中调用）。"""
+    try:
+        import requests
+        import hmac
+        import hashlib
+        import base64
+
+        if not webhook_url:
+            return False
+
+        timestamp = str(int(time.time()))
+        sign = ""
+        if secret:
+            string_to_sign = f'{timestamp}\n{secret}'
+            hmac_code = hmac.new(
+                string_to_sign.encode('utf-8'),
+                ''.encode('utf-8'),
+                digestmod=hashlib.sha256
+            ).digest()
+            sign = base64.b64encode(hmac_code).decode('utf-8')
+
+        data = {
+            "msg_type": "text",
+            "content": {"text": message},
+            "timestamp": timestamp,
+        }
+        if sign:
+            data["sign"] = sign
+
+        resp = requests.post(webhook_url, json=data, timeout=10)
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get('code') == 0:
+                logger.info("飞书通知发送成功")
+                return True
+            else:
+                logger.warning(f"飞书通知发送失败: {result.get('msg')}")
+                return False
+        else:
+            logger.warning(f"飞书通知发送失败: HTTP {resp.status_code}")
+            return False
+    except Exception as e:
+        logger.warning(f"飞书通知发送异常: {e}")
+        return False
+
+
+def _send_slider_manual_notification(user_id: str, message: str) -> None:
+    """通过账号绑定的通知渠道发送滑块人工验证通知。"""
+    try:
+        from common.db.compat import db_manager
+        from common.utils.notification_utils import parse_notification_config
+
+        notifications = db_manager.get_account_notifications(user_id)
+        if not notifications:
+            logger.debug(f"【{user_id}】未配置通知渠道，跳过滑块人工通知")
+            return
+
+        for notification in notifications:
+            if not notification.get('enabled', True):
+                continue
+            channel_type = notification.get('channel_type')
+            channel_config = notification.get('channel_config')
+            try:
+                config_data = parse_notification_config(channel_config)
+                if channel_type in ('feishu', 'lark'):
+                    webhook_url = config_data.get('webhook_url', '')
+                    secret = config_data.get('secret', '')
+                    _send_slider_manual_feishu(webhook_url, secret, message)
+                elif channel_type == 'email':
+                    smtp_server = (config_data.get('smtp_server') or '').strip()
+                    smtp_port = int(config_data.get('smtp_port', 465) or 465)
+                    email_user = (config_data.get('email_user') or '').strip()
+                    email_password = config_data.get('email_password') or ''
+                    recipient_email = (config_data.get('recipient_email') or '').strip()
+                    _send_slider_manual_email(
+                        smtp_server, smtp_port, email_user, email_password,
+                        recipient_email, "【闲鱼自动回复】滑块验证需要人工操作", message,
+                    )
+                elif channel_type in ('ding_talk', 'dingtalk'):
+                    import requests as _req
+                    webhook_url = config_data.get('webhook_url', '')
+                    if webhook_url:
+                        _req.post(webhook_url, json={"msg_type": "text", "content": {"text": message}}, timeout=10)
+            except Exception as e:
+                logger.warning(f"滑块通知发送到渠道 {channel_type} 失败: {e}")
+    except Exception as e:
+        logger.warning(f"滑块通知发送失败: {e}")
 from common.services.captcha.trajectory import TrajectoryGenerator
 from common.services.captcha.slider_elements import SliderElementFinder
 from common.services.captcha.verification_checker import VerificationChecker
@@ -30,7 +159,6 @@ from common.services.captcha.history_manager import HistoryManager
 from common.services.captcha.playwright_touch import (
     SLIDER_USER_AGENT,
     configure_slider_user_agent,
-    dispatch_touch_drag,
 )
 from common.utils.browser_utils import ensure_playwright_browser_path, get_chromium_executable_path, is_frozen
 
@@ -126,6 +254,7 @@ class PlaywrightSliderService:
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
+        "--no-proxy-server",
     ]
 
     def __init__(
@@ -160,7 +289,7 @@ class PlaywrightSliderService:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self._slide_response_code: Optional[int] = None
-        self._cdp_touch_enabled = False
+        self._use_patchright = False
         self._slider_profile_tempdir: Optional[tempfile.TemporaryDirectory] = None
 
         # 持久化用户数据目录（参照旧框架）
@@ -220,10 +349,10 @@ class PlaywrightSliderService:
         """定位 Chromium 可执行文件路径。"""
         if not is_frozen():
             return None
-        browser_package = "patchright" if self._cdp_touch_enabled else "playwright"
+        browser_package = "patchright" if self._use_patchright else "playwright"
         return get_chromium_executable_path(
             browser_package,
-            strict_revision=self._cdp_touch_enabled,
+            strict_revision=self._use_patchright,
         )
 
     def _clean_singleton_lock_files(self) -> None:
@@ -300,7 +429,7 @@ class PlaywrightSliderService:
                 )
             if add_stealth_script and PATCHRIGHT_AVAILABLE and patchright_browser_available:
                 self.playwright = patchright_sync_playwright().start()
-                self._cdp_touch_enabled = True
+                self._use_patchright = True
                 logger.info(f"【{self.pure_user_id}】Patchright Playwright启动成功")
             else:
                 self.playwright = sync_playwright().start()
@@ -360,10 +489,10 @@ class PlaywrightSliderService:
                 else:
                     launch_kwargs['no_viewport'] = True
                 launch_kwargs['timezone_id'] = 'Asia/Shanghai'
-                if not self._cdp_touch_enabled:
+                if not self._use_patchright:
                     launch_kwargs['ignore_default_args'] = ['--enable-automation']
                 launch_kwargs['user_agent'] = SLIDER_USER_AGENT
-                launch_kwargs['has_touch'] = self._cdp_touch_enabled
+                launch_kwargs['has_touch'] = False
                 launch_kwargs['is_mobile'] = False
                 if self.headless:
                     launch_kwargs['screen'] = {'width': 1920, 'height': 1080}
@@ -383,7 +512,7 @@ class PlaywrightSliderService:
                 add_stealth_script
                 and sys.platform == 'win32'
                 and not executable_path
-                and not self._cdp_touch_enabled
+                and not self._use_patchright
             )
             if prefer_system_chrome:
                 # Windows 滑块优先使用系统 Chrome；无头时仍不会创建可见窗口。
@@ -454,7 +583,7 @@ class PlaywrightSliderService:
 
             # 添加增强反检测脚本（密码登录时不需要，参照旧框架）
             if add_stealth_script:
-                if self._cdp_touch_enabled:
+                if self._use_patchright:
                     logger.info(
                         f"【{self.pure_user_id}】Patchright 已处理自动化标记，"
                         "跳过额外 navigator 覆盖"
@@ -656,6 +785,10 @@ class PlaywrightSliderService:
         url: str,
         browser_timeout: int = 20,
         url_provider: Optional[Callable[[], Optional[str]]] = None,
+        manual_wait_seconds: int = 0,
+        manual_mode: bool = False,
+        smtp_config: Optional[Dict[str, str]] = None,
+        notify_email: str = "",
     ) -> Tuple[bool, Optional[Dict[str, str]]]:
         """
         运行滑块验证流程
@@ -669,6 +802,12 @@ class PlaywrightSliderService:
                 过期页时才用它按需重新拉取链接并重试（链接未过期则完全不调用，避免多余请求）；
                 若回调发现 token 已可用（风控解除），返回哨兵 CAPTCHA_NOT_REQUIRED，本方法据此
                 提前结束。回调返回新 URL 字符串 / 哨兵 / None（None 时沿用原链接）。
+            manual_wait_seconds: 自动滑动失败后等待人工手动完成验证的秒数；0 表示不等待
+                （保持原行为：自动失败立即返回）。
+            manual_mode: 纯手动模式。为 True 时跳过自动滑动，直接打开窗口等待人工完成验证
+                （manual_wait_seconds 作为人工等待超时；未设置时默认 120 秒）。
+            smtp_config: SMTP 邮件配置 dict，含 smtp_server/smtp_port/email_user/email_password。
+            notify_email: 通知收件邮箱；为空则不发送邮件通知。
             
         Returns:
             (是否成功, cookies字典)
@@ -708,9 +847,15 @@ class PlaywrightSliderService:
             browser_start_time = time.time()
             logger.info(f"【{self.pure_user_id}】浏览器已启动，{browser_timeout}秒内未完成验证将自动关闭")
 
-            # 启动超时守护定时器
+            # 启动超时守护定时器。启用人工等待时把守护时长同步延长（自动阶段 + 人工窗口），
+            # 避免人工正在滑动时被守护线程强杀浏览器。
             import threading
-            timeout_timer = threading.Timer(browser_timeout, _force_close_on_timeout)
+            guard_seconds = browser_timeout
+            if manual_mode:
+                guard_seconds += manual_wait_seconds or 120
+            elif manual_wait_seconds > 0:
+                guard_seconds += manual_wait_seconds
+            timeout_timer = threading.Timer(guard_seconds, _force_close_on_timeout)
             timeout_timer.daemon = True
             timeout_timer.start()
 
@@ -754,12 +899,11 @@ class PlaywrightSliderService:
                 if timed_out:
                     return None
 
-                # CDP 触摸模式不注入额外鼠标/滚轮事件，避免把两种输入源混在同一挑战中。
-                if not self._cdp_touch_enabled:
-                    self.page.mouse.move(640, 360)
-                    time.sleep(random.uniform(0.02, 0.05))
-                    self.page.mouse.wheel(0, random.randint(200, 500))
-                    time.sleep(random.uniform(0.02, 0.05))
+                # 模拟真人浏览行为：轻微移动鼠标 + 滚轮滚动页面
+                self.page.mouse.move(640, 360)
+                time.sleep(random.uniform(0.02, 0.05))
+                self.page.mouse.wheel(0, random.randint(200, 500))
+                time.sleep(random.uniform(0.02, 0.05))
                 if timed_out:
                     return None
 
@@ -816,7 +960,20 @@ class PlaywrightSliderService:
                 logger.info(f"【{self.pure_user_id}】页面内容包含验证码相关关键词")
 
                 # 处理滑块验证（带超时检查）
-                success = self._solve_slider_with_timeout(browser_start_time, browser_timeout)
+                if manual_mode:
+                    wait_seconds = manual_wait_seconds or 120
+                    logger.info(
+                        f"【{self.pure_user_id}】纯手动模式：跳过自动滑动，"
+                        f"等待人工完成验证（最长 {wait_seconds} 秒）"
+                    )
+                    success = self._wait_for_manual_verification(
+                        browser_start_time,
+                        browser_timeout + wait_seconds,
+                        smtp_config=smtp_config,
+                        notify_email=notify_email,
+                    )
+                else:
+                    success = self._solve_slider_with_timeout(browser_start_time, browser_timeout)
 
                 if success:
                     logger.info(f"【{self.pure_user_id}】滑块验证成功")
@@ -840,7 +997,28 @@ class PlaywrightSliderService:
 
                     return success, cookies
                 else:
-                    logger.warning(f"【{self.pure_user_id}】滑块验证失败")
+                    if manual_mode or manual_wait_seconds > 0:
+                        wait_seconds = manual_wait_seconds or 120
+                        logger.warning(
+                            f"【{self.pure_user_id}】滑块验证失败，进入人工等待模式："
+                            f"请在浏览器窗口中手动完成验证（最长 {wait_seconds} 秒）"
+                        )
+                        success = self._wait_for_manual_verification(
+                            browser_start_time,
+                            browser_timeout + wait_seconds,
+                            smtp_config=smtp_config,
+                            notify_email=notify_email,
+                        )
+                        if success:
+                            logger.info(f"【{self.pure_user_id}】✅ 人工滑动验证成功")
+                            try:
+                                time.sleep(1)
+                                cookies = self._get_cookies_after_success()
+                                logger.info(f"【{self.pure_user_id}】已获取cookie，准备关闭浏览器")
+                            except Exception as e:
+                                logger.warning(f"【{self.pure_user_id}】获取cookie时出错: {str(e)}")
+                            return True, cookies
+                        logger.warning(f"【{self.pure_user_id}】人工等待超时或未完成，滑块验证失败")
                     return False, None
             else:
                 logger.info(f"【{self.pure_user_id}】页面内容不包含验证码相关关键词，可能不需要验证")
@@ -882,7 +1060,79 @@ class PlaywrightSliderService:
             logger.warning(f"【{self.pure_user_id}】⏰ 剩余时间不足: {remaining:.1f}秒")
         
         return False
-    
+
+    def _wait_for_manual_verification(
+        self,
+        browser_start_time: float,
+        total_timeout: int,
+        smtp_config: Optional[Dict[str, str]] = None,
+        notify_email: str = "",
+    ) -> bool:
+        """等待人工在浏览器窗口中手动完成滑块验证。
+
+        自动滑动失败（或纯手动模式）后保持浏览器窗口打开，轮询检测
+        x5sec cookie 是否出现/变化或页面是否跳转，直至成功或超时。
+        期间不做任何自动点击/滑动，避免频率操作加剧风控。
+
+        Args:
+            browser_start_time: 浏览器启动时间戳
+            total_timeout: 总超时秒数（自动尝试已消耗的时间 + 人工等待窗口）
+            smtp_config: SMTP 邮件配置（可选）
+            notify_email: 通知收件邮箱（可选）
+
+        Returns:
+            是否人工完成验证
+        """
+        # 通过账号绑定的通知渠道发送通知（飞书/邮箱/钉钉等，仅首次进入时发一次）
+        try:
+            notification_msg = (
+                f"⚠️ 滑块验证需要人工操作\n\n"
+                f"闲鱼账号: {self.pure_user_id}\n"
+                f"最长等待时间: {total_timeout} 秒\n"
+                f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"请在浏览器窗口中手动完成滑块验证。"
+            )
+            _send_slider_manual_notification(self.user_id, notification_msg)
+        except Exception as e:
+            logger.warning(f"【{self.pure_user_id}】滑块人工验证通知发送失败: {e}")
+
+        pre_x5sec = self._read_x5sec_value()
+        logger.info(
+            f"【{self.pure_user_id}】开始等待人工验证，检测 x5sec 变化（当前: "
+            f"{'有值' if pre_x5sec else '无'}）..."
+        )
+        check_interval = 2.0
+        while True:
+            if self._check_browser_timeout(browser_start_time, total_timeout):
+                logger.error(f"【{self.pure_user_id}】人工等待超时（共{total_timeout}秒），放弃")
+                return False
+
+            try:
+                # 检测1：x5sec cookie 已生成（验证通过的标志）
+                x5sec_value = self._read_x5sec_value()
+                if x5sec_value and x5sec_value != pre_x5sec:
+                    logger.info(f"【{self.pure_user_id}】✅ 检测到 x5sec 已更新，人工验证通过")
+                    return True
+                if x5sec_value and not pre_x5sec:
+                    logger.info(f"【{self.pure_user_id}】✅ 检测到 x5sec 已生成，人工验证通过")
+                    return True
+
+                # 检测2：页面已跳转离开验证页面（人工通过后页面会自动跳转）
+                current_url = self.page.url
+                page_content = self.page.content()
+                has_captcha_keywords = any(
+                    kw in page_content for kw in ["验证码", "captcha", "滑块", "nc_1_n1z", "nc-container"]
+                )
+                if not has_captcha_keywords:
+                    logger.info(
+                        f"【{self.pure_user_id}】✅ 页面已不包含验证元素，判定人工验证通过，URL: {current_url}"
+                    )
+                    return True
+            except Exception as check_e:
+                logger.warning(f"【{self.pure_user_id}】人工验证状态检查出错（忽略继续等待）: {check_e}")
+
+            time.sleep(check_interval)
+
     def _read_x5sec_value(self) -> Optional[str]:
         """读取当前 context 里的 x5sec cookie 值；不存在返回 None。"""
         try:
@@ -1144,21 +1394,6 @@ class PlaywrightSliderService:
             start_x = button_box["x"] + button_box["width"] / 2
             start_y = button_box["y"] + button_box["height"] / 2
             logger.info(f"【{self.pure_user_id}】滑块位置: ({start_x}, {start_y})")
-
-            if self._cdp_touch_enabled:
-                # 触摸拖动必须禁止页面滚动，否则浏览器会在中途取消 pointer 流；
-                # 事件完全由 CDP 派发，不触碰系统鼠标，也不抢占桌面焦点。
-                slider_button.evaluate(
-                    "element => { element.style.touchAction = 'none'; }"
-                )
-                self._slide_response_code = None
-                dispatch_touch_drag(self.page, start_x, start_y, trajectory)
-                logger.info(
-                    f"【{self.pure_user_id}】已通过 CDP 触摸轨迹完成滑动："
-                    f"{len(trajectory)}点，末点=({trajectory[-1][0]:.1f},"
-                    f"{trajectory[-1][1]:.1f})"
-                )
-                return True
 
             # 第一阶段：移动到滑块附近
             try:
@@ -1587,6 +1822,10 @@ def run_slider_verification(
     headless: bool = False,
     browser_timeout: int = 20,
     url_provider: Optional[Callable[[], Optional[str]]] = None,
+    manual_wait_seconds: int = 0,
+    manual_mode: bool = False,
+    smtp_config: Optional[Dict[str, str]] = None,
+    notify_email: str = "",
 ) -> Tuple[bool, Optional[Dict[str, str]]]:
     """在独立进程中运行滑块验证（模块级别函数，支持ProcessPoolExecutor）
     
@@ -1597,6 +1836,10 @@ def run_slider_verification(
         headless: 是否无头模式
         browser_timeout: 浏览器验证超时时间（秒），默认20秒
         url_provider: 可选回调，浏览器就绪后用于重新获取新鲜验证链接，避免链接过期
+        manual_wait_seconds: 自动失败后等待人工验证的秒数（0=不等待）
+        manual_mode: 纯手动模式（跳过自动滑动，直接等人工）
+        smtp_config: SMTP 邮件配置 dict（smtp_server/smtp_port/email_user/email_password）
+        notify_email: 通知收件邮箱（留空=不通知）
         
     Returns:
         (是否成功, cookies字典)
@@ -1608,7 +1851,15 @@ def run_slider_verification(
             enable_learning=enable_learning,
             headless=headless
         )
-        return slider.run(url, browser_timeout=browser_timeout, url_provider=url_provider)
+        return slider.run(
+            url,
+            browser_timeout=browser_timeout,
+            url_provider=url_provider,
+            manual_wait_seconds=manual_wait_seconds,
+            manual_mode=manual_mode,
+            smtp_config=smtp_config,
+            notify_email=notify_email,
+        )
     except Exception as e:
         logger.error(f"【{user_id}】滑块验证进程执行失败: {e}")
         return False, None

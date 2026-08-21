@@ -21,6 +21,7 @@ interface SliderModeSettingProps {
 const MODE_LABELS: Record<SliderMode, string> = {
   browser: '浏览器自动滑动',
   real_mouse: '真实鼠标滑动',
+  manual: '纯手动模式',
 }
 
 export function SliderModeSetting({ value, onSaved }: SliderModeSettingProps) {
@@ -74,6 +75,7 @@ export function SliderModeSetting({ value, onSaved }: SliderModeSettingProps) {
         >
           <option value="browser">浏览器自动滑动</option>
           <option value="real_mouse">真实鼠标滑动</option>
+          <option value="manual">纯手动模式</option>
         </select>
         {saving && (
           <Loader2 className="pointer-events-none absolute right-8 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-blue-500" />

@@ -39,6 +39,8 @@ from common.services.token_api_mode import (
 from common.services.captcha.concurrency import run_browser_task
 from common.services.captcha.slider_mode import (
     SLIDER_MODE_REAL_MOUSE,
+    load_manual_wait_seconds,
+    load_slider_notify_config,
     refresh_slider_mode_from_database,
 )
 from common.services.captcha.token_refetch import request_fresh_captcha_url
@@ -754,6 +756,8 @@ class CookieTokenManager:
                     self.cookies_str, self._request_captcha_url_sync, remote_config,
                 )
                 selected_slider_mode = await refresh_slider_mode_from_database()
+                manual_wait_seconds = await load_manual_wait_seconds()
+                smtp_config, notify_email = await load_slider_notify_config()
                 if (
                     remote_config is None
                     and selected_slider_mode == SLIDER_MODE_REAL_MOUSE
@@ -765,12 +769,18 @@ class CookieTokenManager:
                         *slider_args,
                         weight_class="local",
                         slider_mode=selected_slider_mode,
+                        manual_wait_seconds=manual_wait_seconds,
+                        smtp_config=smtp_config,
+                        notify_email=notify_email,
                     )
                 else:
                     success, cookies, captcha_engine = await run_browser_task(
                         run_slider_verification_with_fallback,
                         *slider_args,
                         slider_mode=selected_slider_mode,
+                        manual_wait_seconds=manual_wait_seconds,
+                        smtp_config=smtp_config,
+                        notify_email=notify_email,
                     )
 
                 # 重取验证链接的 Token 请求可能在任意结果分支下发新 Cookie（尤其是

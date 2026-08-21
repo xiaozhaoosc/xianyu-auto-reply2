@@ -234,7 +234,7 @@ export interface ThemeFontSettings {
 
 export type ThemeSettings = ThemeAppearanceSettings & ThemeFontSettings
 export type PasswordLoginMode = 'protocol' | 'browser'
-export type SliderMode = 'browser' | 'real_mouse'
+export type SliderMode = 'browser' | 'real_mouse' | 'manual'
 export type TokenApiMode = 'web' | 'remote'
 
 export interface SystemSettings {

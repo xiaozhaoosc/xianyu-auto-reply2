@@ -291,7 +291,7 @@ class NotificationManager:
             logger.error(f"处理Token刷新通知失败: {self._safe_str(e)}")
 
     def _is_normal_token_expiry(self, error_message: str) -> bool:
-        """检查是否是正常的令牌过期"""
+        """检查是否是正常的令牌过期（受 notify.token_expiry_notify 开关控制）"""
         no_notification_keywords = [
             'FAIL_SYS_TOKEN_EXOIRED::令牌过期',
             'FAIL_SYS_TOKEN_EXPIRED::令牌过期',
@@ -308,10 +308,25 @@ class NotificationManager:
             'Token定时刷新失败'
         ]
 
+        is_normal = False
         for keyword in no_notification_keywords:
             if keyword in error_message:
-                return True
-        return False
+                is_normal = True
+                break
+
+        if not is_normal:
+            return False
+
+        # 检查是否开启了 Token 正常过期通知
+        try:
+            from common.db.compat import db_manager
+            enabled = db_manager.get_system_setting("notify.token_expiry_notify", "false")
+            if str(enabled).lower() == "true":
+                return False  # 开关打开，不过滤，发送通知
+        except Exception:
+            pass
+
+        return True  # 默认过滤，不发送通知
 
     def _is_token_related_error(self, error_message: str) -> bool:
         """检查是否是Token相关的错误"""

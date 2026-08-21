@@ -177,7 +177,22 @@ class DatabaseInitializer:
         (
             "captcha.slider_mode",
             "browser",
-            "滑块滑动方式：browser/real_mouse",
+            "滑块滑动方式：browser-自动滑动/real_mouse-真实鼠标(仅Windows)/manual-纯手动(跳过自动，等待人工)",
+        ),
+        (
+            "captcha.manual_wait_seconds",
+            "120",
+            "自动滑动失败后等待人工完成验证的秒数（0=不等待，直接失败）",
+        ),
+        (
+            "captcha.slider_notify_email",
+            "",
+            "滑块需要人工操作时的通知邮箱（留空=不通知）",
+        ),
+        (
+            "notify.token_expiry_notify",
+            "false",
+            "Token正常过期是否发送通知（true=发送，false=不发送）",
         ),
         (
             "token.api_mode",

@@ -12,7 +12,7 @@ from loguru import logger
 
 from common.services.captcha.slider_stealth import run_slider_verification, CAPTCHA_NOT_REQUIRED, URL_EXPIRED
 from common.services.captcha.remote_timeout import get_remote_solve_timeout
-from common.services.captcha.slider_mode import is_real_mouse_slider_mode
+from common.services.captcha.slider_mode import is_manual_slider_mode, is_real_mouse_slider_mode
 
 
 def _has_x5sec(cookies: Optional[Dict[str, str]]) -> bool:
@@ -115,6 +115,9 @@ def run_slider_verification_with_fallback(
     remote_config: Optional[dict] = None,
     weight_class: str = "local",
     slider_mode: Optional[str] = None,
+    manual_wait_seconds: int = 0,
+    smtp_config: Optional[dict] = None,
+    notify_email: str = "",
 ) -> Tuple[bool, Optional[Dict[str, str]], Optional[str]]:
     """执行滑块验证编排，主引擎失败后不再启用 DrissionPage 兜底。
 
@@ -132,10 +135,14 @@ def run_slider_verification_with_fallback(
         weight_class: 排队来源类别（"local"=本地Token刷新 / "remote"=远程过滑块接口），
             仅 real_mouse 引擎排队时按权重放行使用；默认 "local"。
         slider_mode: 本次任务在入队前读取的滑动方式快照；未传时读取当前进程缓存。
+        manual_wait_seconds: 自动滑动失败后等待人工验证的秒数（0=不等待）。
+        smtp_config: SMTP 邮件配置 dict（smtp_server/smtp_port/email_user/email_password）。
+        notify_email: 滑块需要人工操作时的通知收件邮箱（留空=不通知）。
 
     Returns:
         (是否成功, cookies 字典 | None, 通过引擎 | None)
-        通过引擎取值：'playwright'（主引擎）/ 'real_mouse'（真实鼠标）/ 'remote'（远程接口）/ None（未成功）
+        通过引擎取值：'playwright'（主引擎）/ 'real_mouse'（真实鼠标）/ 'manual'（人工）
+        / 'remote'（远程接口）/ None（未成功）
     """
     # -1. 远程过滑块（可选，由全局配置 remote_config 触发）：
     #     已配置则优先调远程接口求解；超时/网络不可用 → 继续本机主流程；
@@ -237,13 +244,20 @@ def run_slider_verification_with_fallback(
                 f"（需 Windows 桌面 + pyautogui），本次回退原有滑块逻辑"
             )
 
-    # 1. Playwright 主引擎
+    # 1. Playwright 主引擎（纯手动模式：跳过自动滑动，直接等人工）
+    manual_mode = is_manual_slider_mode(slider_mode)
+    if manual_mode:
+        logger.info(f"【{user_id}】已选择纯手动模式，跳过自动滑动，直接等待人工验证")
     ok, cookies = run_slider_verification(
         user_id, url, enable_learning, headless, browser_timeout,
         url_provider=url_provider,
+        manual_wait_seconds=manual_wait_seconds,
+        manual_mode=manual_mode,
+        smtp_config=smtp_config,
+        notify_email=notify_email,
     )
     if ok and _has_x5sec(cookies):
-        return True, cookies, "playwright"
+        return True, cookies, "manual" if manual_mode else "playwright"
 
     # 验证链接已过期且无法自助重取：上报 url_expired，供调用方刷新URL后重试。
     if cookies == URL_EXPIRED:
@@ -253,5 +267,5 @@ def run_slider_verification_with_fallback(
     # 主引擎失败直接返回，不再启动 DrissionPage 第二套浏览器引擎。
     logger.info(f"【{user_id}】Playwright主引擎滑块未通过，DrissionPage兜底已关闭")
     if ok and cookies:
-        return ok, cookies, "playwright"
+        return ok, cookies, "manual" if manual_mode else "playwright"
     return ok, cookies, None

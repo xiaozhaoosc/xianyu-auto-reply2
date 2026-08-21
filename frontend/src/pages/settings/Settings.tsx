@@ -697,6 +697,21 @@ export function Settings() {
                   current ? { ...current, 'captcha.slider_mode': mode } : current
                 ))}
               />
+              <div className="flex items-center justify-between gap-4 py-3 border-t border-slate-100 dark:border-slate-700">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-900 dark:text-slate-100">滑块验证通知邮箱</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    自动滑动失败需人工操作时发送邮件通知（留空=不通知）
+                  </p>
+                </div>
+                <input
+                  type="email"
+                  value={String(settings?.['captcha.slider_notify_email'] || '')}
+                  onChange={(e) => setSettings(s => s ? { ...s, 'captcha.slider_notify_email': e.target.value } : null)}
+                  placeholder="your-email@qq.com"
+                  className="input-ios w-56"
+                />
+              </div>
               <TokenApiModeSetting
                 value={settings?.['token.api_mode']}
                 remoteUrl={settings?.['token.remote_url']}
@@ -712,6 +727,20 @@ export function Settings() {
                     : current
                 ))}
               />
+              <div className="flex items-center justify-between py-3 border-t border-slate-100 dark:border-slate-700">
+                <div>
+                  <p className="font-medium text-slate-900 dark:text-slate-100">Token过期通知</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">开启后Token正常过期也会发送通知（默认关闭）</p>
+                </div>
+                <label className="switch-ios">
+                  <input
+                    type="checkbox"
+                    checked={String(settings?.['notify.token_expiry_notify'] || 'false') === 'true'}
+                    onChange={(e) => setSettings(s => s ? { ...s, 'notify.token_expiry_notify': e.target.checked ? 'true' : 'false' } : null)}
+                  />
+                  <span className="switch-slider"></span>
+                </label>
+              </div>
             </div>
           </div>
           {/* SMTP邮件配置 */}
