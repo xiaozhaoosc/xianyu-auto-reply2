@@ -355,7 +355,7 @@ class SchedulerService:
                     ),
                 },
                 TASK_CODE_COOKIES_REFRESH: {
-                    "config": cookies_refresh_config or {"interval_seconds": 600, "enabled": True},
+                    "config": cookies_refresh_config or {"interval_seconds": 3600, "enabled": True},
                     "task_running": (
                         self._cookies_refresh_task_handle is not None
                         and not self._cookies_refresh_task_handle.done()

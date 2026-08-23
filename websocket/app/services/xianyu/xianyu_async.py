@@ -2646,8 +2646,8 @@ class XianyuAsync:
                                     f"（原因: {refresh_status or '未知'}，第{self._token_fetch_failures}次失败），等待重试..."
                                 )
 
-                                # 连续失败100次后禁用账号
-                                if self._token_fetch_failures >= 100:
+                                # 连续失败2次后禁用账号（避免频繁请求加强风控）
+                                if self._token_fetch_failures >= 2:
                                     logger.error(f"【{self.cookie_id}】Token获取连续失败{self._token_fetch_failures}次，禁用账号")
                                     try:
                                         from common.db.compat import db_manager
@@ -2663,8 +2663,8 @@ class XianyuAsync:
                             #   上次登录间隔 300 秒未到），每 5 秒重试无意义且会刷屏日志、
                             #   占用 token API 配额。
                             # - 本机滑块不处理且接口最终仍需滑块：等待 Cookie 刷新的 3 分钟轮询周期。
-                            # - 其他场景（滑块、网络故障、API 业务失败）：保持 5 秒快速重试，
-                            #   避免延误账号恢复。
+                            # - 其他场景（滑块、网络故障、API 业务失败）：等待6小时再重试，
+                            #   避免频繁请求加强风控导致账号封禁。
                             if refresh_status == 'skipped_cooldown':
                                 sleep_duration = 300
                             elif refresh_status in (
@@ -2676,7 +2676,7 @@ class XianyuAsync:
                             ):
                                 sleep_duration = self.token_manager.cookie_refresh_interval
                             else:
-                                sleep_duration = 5
+                                sleep_duration = 21600  # 6小时
                             await self._interruptible_sleep(sleep_duration)
                             continue
                     else:
