@@ -1128,6 +1128,16 @@ class PlaywrightSliderService:
                         f"【{self.pure_user_id}】✅ 页面已不包含验证元素，判定人工验证通过，URL: {current_url}"
                     )
                     return True
+                
+                # 每10秒输出一次当前状态，方便诊断
+                elapsed = time.time() - browser_start_time
+                if int(elapsed) % 10 == 0:
+                    logger.info(
+                        f"【{self.pure_user_id}】⏳ 等待人工操作中... "
+                        f"x5sec={'有值' if x5sec_value else '无'}, "
+                        f"页面包含验证码={has_captcha_keywords}, "
+                        f"已等待{int(elapsed)}秒"
+                    )
             except Exception as check_e:
                 logger.warning(f"【{self.pure_user_id}】人工验证状态检查出错（忽略继续等待）: {check_e}")
 
@@ -1205,7 +1215,7 @@ class PlaywrightSliderService:
             是否成功
         """
         failure_records = []
-        max_retries = 3
+        max_retries = 1  # 减少自动尝试次数，避免触发风控
 
         # 滑动前快照 x5sec 旧值，供严格判定使用
         pre_x5sec = self._read_x5sec_value()

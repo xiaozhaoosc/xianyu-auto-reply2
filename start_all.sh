@@ -9,6 +9,8 @@ unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy
 export BROWSER_HEADLESS=false
 # 服务器有图形界面时，设置 DISPLAY 让 Playwright 能打开浏览器窗口
 export DISPLAY="${DISPLAY:-:10}"
+# Token刷新间隔（秒），23小时=82800秒，默认20小时=72000秒
+export TOKEN_REFRESH_INTERVAL="${TOKEN_REFRESH_INTERVAL:-82800}"
 
 # 数据库/Redis 连接（默认指向本机 dev 库，可用环境变量覆盖）
 export MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"

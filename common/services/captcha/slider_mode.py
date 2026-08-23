@@ -27,7 +27,7 @@ SLIDER_MODES = {SLIDER_MODE_BROWSER, SLIDER_MODE_REAL_MOUSE, SLIDER_MODE_MANUAL}
 MANUAL_WAIT_SETTING_KEY = "captcha.manual_wait_seconds"
 
 _mode_lock = RLock()
-_current_mode = SLIDER_MODE_BROWSER
+_current_mode = SLIDER_MODE_MANUAL  # 默认使用纯手动模式
 
 
 def normalize_slider_mode(value: object) -> str:

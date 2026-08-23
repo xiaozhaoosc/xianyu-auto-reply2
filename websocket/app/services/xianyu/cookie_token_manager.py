@@ -1332,19 +1332,17 @@ class CookieTokenManager:
                         # 滑块验证成功后，清除旧缓存并重新获取token
                         await self._delete_cached_token()
                         return await self.refresh_token(captcha_retry_count=captcha_retry_count + 1)
-                    logger.error(f"【{self.cookie_id}】滑块验证失败")
+                    logger.warning(f"【{self.cookie_id}】滑块验证失败，保留原有token继续使用")
                     notification_sent = True
                     self.last_token_refresh_status = "failed_captcha"
-                    self.current_token = None
-                    await self._delete_cached_token()
-                    return None
+                    # 验证失败时保留原有token，不清除，让账号继续使用旧token
+                    return self.current_token
                 except Exception as captcha_e:
-                    logger.error(f"【{self.cookie_id}】滑块验证处理异常: {self._safe_str(captcha_e)}")
+                    logger.warning(f"【{self.cookie_id}】滑块验证处理异常: {self._safe_str(captcha_e)}，保留原有token继续使用")
                     notification_sent = True
                     self.last_token_refresh_status = "failed_captcha_exception"
-                    self.current_token = None
-                    await self._delete_cached_token()
-                    return None
+                    # 异常时也保留原有token
+                    return self.current_token
 
             # FAIL_SYS_TOKEN_EXOIRED/EXPIRED：允许自动重试一次
             try:
