@@ -157,6 +157,10 @@ class CookiesRefreshService:
             )
 
             context.add_cookies(cookie_payloads)
+            logger.info(
+                f"【COOKIES续期】账号 {account.account_id} 已注入 {len(cookie_payloads)} 个Cookie，"
+                f"开始导航页面: {self.TARGET_URL}"
+            )
             page.goto(self.TARGET_URL, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(2000)
 
@@ -175,16 +179,23 @@ class CookiesRefreshService:
                 message = "页面存在 ant-modal-body，判定续期失败"
                 if modal_text:
                     message = f"{message}: {modal_text[:120]}"
+                logger.warning(f"【COOKIES续期】账号 {account.account_id} {message}")
                 return CookiesRefreshBrowserResult(success=False, message=message, cookies=[])
 
             refreshed_cookies = normalize_browser_cookie_snapshot(context.cookies())
             if not refreshed_cookies:
+                message = "页面刷新完成，但未获取到浏览器Cookie"
+                logger.warning(f"【COOKIES续期】账号 {account.account_id} {message}")
                 return CookiesRefreshBrowserResult(
                     success=False,
-                    message="页面刷新完成，但未获取到浏览器Cookie",
+                    message=message,
                     cookies=[],
                 )
 
+            logger.info(
+                f"【COOKIES续期】账号 {account.account_id} 续期成功: "
+                f"{len(refreshed_cookies)} 个浏览器Cookie"
+            )
             return CookiesRefreshBrowserResult(
                 success=True,
                 message=f"页面校验通过，全量获取到 {len(refreshed_cookies)} 个浏览器Cookie",
