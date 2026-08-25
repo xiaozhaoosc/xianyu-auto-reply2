@@ -162,23 +162,20 @@ class RateTask:
     ) -> List[XYOrder]:
         """
         获取待评价订单
-        
+
         条件：
         - account_id 匹配
-        - 真实下单时间(placed_at)在当天（不是数据库写入时间，
-          避免同步历史订单时 created_at 被误判为今日订单）
-        - placed_at 不为 NULL（历史空值数据跳过，防误伤）
+        - 真实下单时间(placed_at)不为 NULL（历史空值数据跳过，防误伤）
         - 状态为 'shipped'（已发货）或 'completed'（已完成）
         - 未评价（is_rated = False 或 NULL）
+
+        注意：不再限制"仅当天"，否则断线期间漏评的历史订单永远不会被补评；
+        订单是否真的可评价由 check_can_rate 按闲鱼侧实时状态兜底判断，
+        未交易成功/已评价的订单会被安全跳过。
         """
-        # 获取今天的开始时间（北京时间）
-        now = get_beijing_now_naive()
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        
         stmt = select(XYOrder).where(
             XYOrder.account_id == account_id,
             XYOrder.placed_at.is_not(None),
-            XYOrder.placed_at >= today_start,
             XYOrder.status.in_(["shipped", "completed"]),
             (XYOrder.is_rated == False) | (XYOrder.is_rated == None),
         ).order_by(XYOrder.placed_at)
@@ -421,26 +418,54 @@ class RateTask:
     
     async def _check_item_belongs_to_account(self, account_pk: int, item_id: str) -> bool:
         """检查商品是否属于指定账号
-        
+
+        商品表(xy_catalog_items)是本地同步缓存，可能不完整。
+        补评价的订单已按 account_id 过滤、天然属于该账号，
+        因此仅在"商品表存在该商品但归属于其他账号"时拦截；
+        商品表无记录时放行，避免缓存缺失导致大面积误跳过。
+
         Args:
             account_pk: 账号主键ID
             item_id: 商品ID
-            
+
         Returns:
-            True表示商品属于该账号，False表示不属于
+            True表示可继续评价（属于该账号或无缓存记录），False表示确属其他账号
         """
         try:
+            from common.models.xy_account import XYAccount
             from common.models.xy_catalog_item import XYCatalogItem
-            
+
             async with async_session_maker() as session:
-                stmt = select(XYCatalogItem).where(
-                    XYCatalogItem.account_pk == account_pk,
+                # 该商品在商品表中的所有归属主键（同一item可能有多行历史记录）
+                stmt = select(XYCatalogItem.account_pk).where(
                     XYCatalogItem.item_id == item_id
                 )
                 result = await session.execute(stmt)
-                item = result.scalars().first()
-                return item is not None
-                
+                owner_pks = set(result.scalars().all())
+
+                if not owner_pks:
+                    logger.debug(f"[定时补评价] 商品 {item_id} 不在本地商品表，按订单归属放行")
+                    return True
+                if account_pk in owner_pks:
+                    return True
+
+                # 存在归属但都不是当前账号：仅当这些主键对应"仍有效的其他账号"才拦截；
+                # 主键已不存在（如账号重建后的历史残留）视为脏数据，放行。
+                valid_stmt = select(XYAccount.id).where(XYAccount.id.in_(owner_pks))
+                valid_result = await session.execute(valid_stmt)
+                valid_pks = set(valid_result.scalars().all())
+                if valid_pks:
+                    logger.info(
+                        f"[定时补评价] 商品 {item_id} 归属其他有效账号{valid_pks}，跳过评价"
+                    )
+                    return False
+
+                logger.debug(
+                    f"[定时补评价] 商品 {item_id} 仅存在失效归属{owner_pks}（脏数据），放行"
+                )
+                return True
+
         except Exception as e:
             logger.error(f"[定时补评价] 检查商品归属失败: account_pk={account_pk}, item_id={item_id}, error={e}")
-            return False
+            # 检查异常时不阻断补评流程（订单已按账号过滤），交由 check_can_rate 兜底
+            return True

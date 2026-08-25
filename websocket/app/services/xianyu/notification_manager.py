@@ -69,6 +69,12 @@ class NotificationManager:
                 logger.warning(f"📱 系统消息不发送通知: {send_message}")
                 return
 
+            # 过滤评价提醒类系统消息（子串匹配，覆盖~和～等变体）
+            rate_notice_keywords = ['快给ta一个评价吧', '我完成了评价']
+            if any(kw in send_message for kw in rate_notice_keywords):
+                logger.info(f"📱 评价提醒消息不发送通知: {send_message}")
+                return
+
             # 检查消息过滤规则（跳过消息通知）
             try:
                 filter_keywords = db_manager.get_message_filter_keywords(self.cookie_id, 'skip_notify')
