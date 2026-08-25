@@ -65,11 +65,22 @@ for unit in "${!PORTS[@]}"; do
 done
 
 # ---- 2. 账号在线状态探测（websocket 存活时才有意义）----
-ONLINE=$(curl -s -m 8 http://127.0.0.1:8090/internal/accounts/connection-stats 2>/dev/null \
-    | python3 -c "import sys,json;d=json.load(sys.stdin).get('data',{});print(len(d.get('connected_account_ids',[])))" 2>/dev/null)
+get_online_count() {
+    curl -s -m 8 http://127.0.0.1:8090/internal/accounts/connection-stats 2>/dev/null \
+        | python3 -c "import sys,json;d=json.load(sys.stdin).get('data',{});print(len(d.get('connected_account_ids',[])))" 2>/dev/null
+}
+ONLINE=$(get_online_count)
 if [ -n "$ONLINE" ] && [ "$ONLINE" -eq 0 ]; then
-    log "⚠️ WebSocket存活但账号在线数=0"
-    send_feishu "accounts_offline" "WebSocket服务存活但闲鱼账号全部离线（在线数=0），请检查Cookie是否过期"
+    # 二次确认：Token刷新/主动重连会有约1秒的 connecting 过渡窗，
+    # 首次读到0可能是撞上窗口，等15秒复查，仍为0才告警
+    sleep 15
+    ONLINE_RETRY=$(get_online_count)
+    if [ -n "$ONLINE_RETRY" ] && [ "$ONLINE_RETRY" -eq 0 ]; then
+        log "⚠️ WebSocket存活但账号在线数=0（二次确认仍为0）"
+        send_feishu "accounts_offline" "WebSocket服务存活但闲鱼账号全部离线（在线数=0），请检查Cookie是否过期"
+    else
+        log "首次读数为0系重连过渡窗，复查已恢复(${ONLINE_RETRY})，不告警"
+    fi
 fi
 
 exit 0
