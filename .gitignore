@@ -299,3 +299,8 @@ AGENTS.md
 # 定时更新脚本
 # ------------------------------------------
 /scripts/auto_update.sh
+
+# 敏感配置（公开仓库排除）
+deploy/systemd/xianyu.env
+deploy/systemd/feishu_webhook.txt
+logs/
