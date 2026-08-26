@@ -1,0 +1,14 @@
+[Unit]
+Description=定时触发闲鱼店铺数据同步到飞书多维表格（每15分钟）
+
+[Timer]
+# 每小时的 0/15/30/45 分执行
+OnCalendar=*:0/15
+# 开机/休眠后若错过窗口，立即补跑一次
+Persistent=true
+# 避免整点惊群，随机延迟最多 60s
+RandomizedDelaySec=60
+Unit=xianyu-base-sync.service
+
+[Install]
+WantedBy=timers.target
