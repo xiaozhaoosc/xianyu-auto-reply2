@@ -8,9 +8,13 @@
     订单明细/买家信息/卡密内容，避免小组件侧泄露敏感数据。
 
 鉴权：
-    通过环境变量 DASHBOARD_API_KEY 配置访问密钥（放 .env，不入库不入代码）。
+    通过 .env 的 DASHBOARD_API_KEY 配置访问密钥（不入库不入代码）。
       - 已配置：请求必须带 X-Dashboard-Key 头且匹配，否则 401
       - 未配置：视为本地开发模式，放行并打印告警
+
+    注意：BaseConfig 用 pydantic-settings 的 env_file 读 .env，值只进 settings 对象、
+    不会写入 os.environ，因此必须优先从 settings 取；os.getenv 仅作为运维直接注入
+    进程环境变量时的兜底。
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.core.config import get_settings
 from common.models.card import Card
 from common.models.listing_monitor_item import ListingMonitorItem
 from common.models.xy_account import XYAccount
@@ -35,6 +40,14 @@ router = APIRouter(prefix="/dashboard", tags=["飞书看板"])
 _API_KEY_ENV = "DASHBOARD_API_KEY"
 
 
+def _expected_key() -> str:
+    """取期望密钥：settings(.env) 优先，进程环境变量兜底"""
+    from_settings = (get_settings().dashboard_api_key or "").strip()
+    if from_settings:
+        return from_settings
+    return os.getenv(_API_KEY_ENV, "").strip()
+
+
 def _verify_key(provided: str | None) -> None:
     """校验看板访问密钥
 
@@ -44,7 +57,7 @@ def _verify_key(provided: str | None) -> None:
     Raises:
         HTTPException: 已配置密钥但请求未提供或不匹配时抛 401
     """
-    expected = os.getenv(_API_KEY_ENV, "").strip()
+    expected = _expected_key()
     if not expected:
         logger.warning(
             f"{_API_KEY_ENV} 未配置，/dashboard/summary 当前无鉴权（仅限本地开发）"

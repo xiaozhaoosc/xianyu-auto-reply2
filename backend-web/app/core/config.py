@@ -44,6 +44,10 @@ class BackendWebConfig(BaseConfig):
     
     # CORS配置
     cors_origins_raw: str = Field(default="*", alias="CORS_ORIGINS")
+
+    # 飞书云文档小组件看板只读接口访问密钥
+    # 空值 = 不鉴权（仅限本地开发）；生产必须在 .env 配置 DASHBOARD_API_KEY
+    dashboard_api_key: str = Field(default="", alias="DASHBOARD_API_KEY", repr=False)
     
     # 服务间通信URL
     websocket_service_url: str = Field(
