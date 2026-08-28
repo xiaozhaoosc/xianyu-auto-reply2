@@ -1530,29 +1530,36 @@ class PlaywrightSliderService:
         try:
             logger.info(f"【{self.pure_user_id}】开始获取滑块验证成功后的页面cookie...")
 
+            # 先留窗口让 set-cookie 落盘、页面开始跳转
+            time.sleep(1)
+
+            # 轮询等待页面跳离 punish（最多 10 秒）：
+            # Baxia 签发 x5sec 与页面跳转之间存在数秒延迟，
+            # 滑动刚成功就快照 URL 会误判“未通过”并跳过 cookie 回写，
+            # 导致已成功的验证结果被丢弃。
+            punish_kw = ("punish", "x5step=2", "action=captcha", "pureCaptcha")
             current_url = ""
-            try:
-                current_url = self.page.url or ""
-            except Exception:
-                pass
+            for _ in range(10):
+                try:
+                    current_url = self.page.url or ""
+                except Exception:
+                    current_url = ""
+                if not any(k in current_url for k in punish_kw):
+                    break
+                time.sleep(1)
+            url_still_punish = any(k in current_url for k in punish_kw)
+            if url_still_punish:
+                logger.warning(
+                    f"【{self.pure_user_id}】等待10秒后URL仍在punish路径，"
+                    f"改以cookie内容为准判定: {current_url[:120]}"
+                )
+
             logger.info(f"【{self.pure_user_id}】当前页面URL: {current_url}")
 
             try:
                 logger.info(f"【{self.pure_user_id}】当前页面标题: {self.page.title()}")
             except Exception:
                 pass
-
-            # 从 punish 跳走后留个充足的窗口，让 set-cookie 落盘
-            time.sleep(1)
-
-            # 检查 URL 是否还在 punish
-            punish_kw = ("punish", "x5step=2", "action=captcha", "pureCaptcha")
-            if any(k in current_url for k in punish_kw):
-                logger.error(
-                    f"【{self.pure_user_id}】❌ 取cookie前发现URL仍在punish，"
-                    f"验证未真正通过，跳过cookie获取: {current_url[:120]}"
-                )
-                return None
 
             # 获取浏览器中的所有cookie
             cookies = self.context.cookies()
@@ -1586,11 +1593,17 @@ class PlaywrightSliderService:
 
             # 必须含 x5sec 才算真过；仅有 x5secdata/x5sectag 等是验证未通过的信号
             if "x5sec" not in filtered:
+                url_hint = "，URL仍在punish路径" if url_still_punish else ""
                 logger.error(
-                    f"【{self.pure_user_id}】❌ x5相关cookie中没有 x5sec，验证未真正通过。"
+                    f"【{self.pure_user_id}】❌ x5相关cookie中没有 x5sec，验证未真正通过{url_hint}。"
                     f"已有key: {list(filtered.keys())}"
                 )
                 return None
+
+            if url_still_punish:
+                logger.warning(
+                    f"【{self.pure_user_id}】URL仍在punish路径但浏览器已持有x5sec，按验证通过处理"
+                )
 
             return filtered
 
