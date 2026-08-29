@@ -302,9 +302,9 @@ class DatabaseInitializer:
         (
             "token_renewal",
             "Token续期任务",
-            20,
+            10800,
             True,
-            "定时为未来1小时内到期的启用账号预取IM Token，并写入续期到期日",
+            "定时为未来1小时内到期的启用账号预取IM Token（3h，与Cookie刷新链路对齐，降低风控挑战频率）",
         ),
         (
             "cookies_refresh",
@@ -316,9 +316,9 @@ class DatabaseInitializer:
         (
             "api_cookie_renew",
             "接口续期Cookies任务",
-            3600,
+            10800,
             True,
-            "定时通过 hasLogin.do 接口为启用账号续期Cookies并同步Set-Cookie",
+            "定时通过 hasLogin.do 接口为启用账号续期Cookies并同步Set-Cookie（3h，与Cookie刷新链路对齐，降低风控挑战频率）",
         ),
         (
             "close_notice",
