@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -272,6 +273,11 @@ class TokenRenewalTask:
         Cookie 后重试一次，与 WebSocket 侧 Token 刷新的处理口径一致。
         """
         async with self._semaphore:
+            # 错峰+jitter：多账号同时续期容易被闲鱼风控关联挑战滑块，0~30 分钟偏移错开
+            jitter = random.uniform(0, 1800)
+            if jitter > 0.5:
+                logger.info(f"【{self.task_name}】【{candidate.account_id}】错峰延迟 {jitter:.1f}s")
+                await asyncio.sleep(jitter)
             cookies_str = candidate.cookies_str
             result = None
             token_expired_retries = 0
