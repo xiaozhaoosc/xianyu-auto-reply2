@@ -8,12 +8,38 @@ Token管理模块
 4. Token验证
 """
 import asyncio
+import os
 import time
 from loguru import logger
 
 
 class TokenManager:
     """Token管理器"""
+
+    # 滑块/风控类失败状态：命中这些状态时按退避阶梯拉长重试间隔，避免高频触发风控
+    _CAPTCHA_BACKOFF_STATUSES = frozenset({
+        "failed_captcha",
+        "failed_captcha_max_retries",
+        "failed_captcha_exception",
+        "skipped_risk_control_processing",
+        "skipped_local_slider_disabled",
+        "skipped_local_slider_config_unavailable",
+    })
+
+    @staticmethod
+    def _load_cookie_refresh_interval() -> int:
+        """读取Cookie刷新间隔（秒）。环境变量 COOKIE_REFRESH_INTERVAL 可覆盖，默认10800（3小时）"""
+        try:
+            return max(int(os.getenv("COOKIE_REFRESH_INTERVAL", "10800")), 300)
+        except (TypeError, ValueError):
+            return 10800
+
+    def _effective_cookie_interval(self) -> int:
+        """根据连续失败次数计算当前生效的等待间隔（退避阶梯：1h→2h→3h，按基础间隔的1/3、2/3、1倍）"""
+        if self.cookie_consecutive_failures <= 0:
+            return self.cookie_refresh_interval
+        idx = min(self.cookie_consecutive_failures - 1, len(self.cookie_failure_backoff) - 1)
+        return self.cookie_failure_backoff[idx]
     
     def __init__(self, xianyu_instance):
         """
@@ -32,7 +58,13 @@ class TokenManager:
         self.current_token = None
         
         # Cookie刷新配置
-        self.cookie_refresh_interval = 180  # 3分钟
+        # 间隔可通过环境变量 COOKIE_REFRESH_INTERVAL 覆盖（秒），默认 3 小时。
+        # 原硬编码 180 秒（3分钟）导致滑块被高频触发：实测单日刷新2964次、滑块332次、人工验证不断。
+        self.cookie_refresh_interval = self._load_cookie_refresh_interval()
+        # 滑块/风控失败退避阶梯：失败后等待 = 基础间隔的 1/3 → 2/3 → 1 倍（默认即 1h→2h→3h 封顶）
+        base = self.cookie_refresh_interval
+        self.cookie_failure_backoff = (max(base // 3, 300), max(base * 2 // 3, 600), base)
+        self.cookie_consecutive_failures = 0  # 连续滑块/风控失败次数（供退避计算）
         self.last_cookie_refresh_time = 0
         self.cookie_refresh_lock = asyncio.Lock()
         self.cookie_refresh_enabled = True
@@ -74,7 +106,10 @@ class TokenManager:
     
     async def cookie_refresh_loop(self):
         """Cookie刷新定时任务"""
-        logger.info(f"【{self.cookie_id}】Cookie刷新循环已启动，刷新间隔: {self.cookie_refresh_interval}秒")
+        logger.info(
+            f"【{self.cookie_id}】Cookie刷新循环已启动，刷新间隔: {self.cookie_refresh_interval}秒"
+            f"（滑块失败后按退避阶梯 {[f'{x // 3600}h' for x in self.cookie_failure_backoff]} 拉长）"
+        )
         check_count = 0
         try:
             while True:
@@ -86,13 +121,14 @@ class TokenManager:
                         continue
 
                     current_time = time.time()
+                    effective_interval = self._effective_cookie_interval()
                     time_since_last_refresh = current_time - self.last_cookie_refresh_time
-                    
+
                     # 每10次检查输出一次状态日志（约10分钟）
                     if check_count % 10 == 0:
-                        logger.info(f"【{self.cookie_id}】Cookie刷新状态: 距上次刷新 {int(time_since_last_refresh)}秒，间隔 {self.cookie_refresh_interval}秒")
-                    
-                    if time_since_last_refresh >= self.cookie_refresh_interval:
+                        logger.info(f"【{self.cookie_id}】Cookie刷新状态: 距上次刷新 {int(time_since_last_refresh)}秒，当前生效间隔 {effective_interval}秒（连续失败{self.cookie_consecutive_failures}次）")
+
+                    if time_since_last_refresh >= effective_interval:
                         time_since_last_message = current_time - self.last_message_received_time
                         if self.last_message_received_time > 0 and time_since_last_message < self.message_cookie_refresh_cooldown:
                             remaining_time = self.message_cookie_refresh_cooldown - time_since_last_message
@@ -128,13 +164,17 @@ class TokenManager:
         async with self.cookie_refresh_lock:
             try:
                 logger.info(f"【{self.cookie_id}】开始Cookie刷新任务...")
-                
+
                 new_token = await self.xianyu.refresh_token()
-                
+                refresh_status = getattr(self.xianyu, "last_token_refresh_status", "") or ""
+
                 if new_token:
                     self.last_cookie_refresh_time = current_time
+                    if self.cookie_consecutive_failures > 0:
+                        logger.info(f"【{self.cookie_id}】Token刷新成功，滑块失败退避计数清零（原{self.cookie_consecutive_failures}次）")
+                    self.cookie_consecutive_failures = 0
                     logger.info(f"【{self.cookie_id}】Cookie刷新任务完成,Token已更新")
-                elif getattr(self.xianyu, "last_token_refresh_status", "") in (
+                elif refresh_status in (
                     "skipped_local_slider_disabled",
                     "skipped_local_slider_config_unavailable",
                     "skipped_risk_control_processing",
@@ -142,7 +182,10 @@ class TokenManager:
                     "skipped_startup_cache_lookup_failed",
                 ):
                     self.last_cookie_refresh_time = time.time()
-                    refresh_status = self.xianyu.last_token_refresh_status
+                    # 其中滑块/风控相关状态累计退避计数，下次按退避阶梯等待
+                    if refresh_status in self._CAPTCHA_BACKOFF_STATUSES:
+                        self.cookie_consecutive_failures += 1
+                    effective_interval = self._effective_cookie_interval()
                     if refresh_status == "skipped_local_slider_disabled":
                         reason = "Token接口仍需滑块，但本机滑块不处理已开启"
                     elif refresh_status == "skipped_local_slider_config_unavailable":
@@ -155,7 +198,18 @@ class TokenManager:
                         reason = "处理中风控日志检查失败"
                     logger.warning(
                         f"【{self.cookie_id}】{reason}，"
-                        f"等待下一个{self.cookie_refresh_interval}秒刷新周期"
+                        f"等待下一个{int(effective_interval / 60)}分钟刷新周期"
+                        f"（连续滑块/风控失败{self.cookie_consecutive_failures}次）"
+                    )
+                elif refresh_status in self._CAPTCHA_BACKOFF_STATUSES:
+                    # 滑块验证失败（自动滑未过/人工超时/异常）：不5秒重试，直接按退避阶梯拉长
+                    self.cookie_consecutive_failures += 1
+                    self.last_cookie_refresh_time = time.time()
+                    effective_interval = self._effective_cookie_interval()
+                    logger.warning(
+                        f"【{self.cookie_id}】滑块验证未通过（{refresh_status}），"
+                        f"进入退避：连续失败{self.cookie_consecutive_failures}次，"
+                        f"{int(effective_interval / 3600)}小时后再试"
                     )
                 else:
                     logger.warning(f"【{self.cookie_id}】Cookie刷新任务失败,Token刷新未成功，5秒后立即重试")

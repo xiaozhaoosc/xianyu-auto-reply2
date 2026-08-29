@@ -388,7 +388,7 @@ class CookieTokenManager:
                         STARTUP_EXPIRED_CACHE_REFRESH_JITTER_SECONDS,
                     )
                     token_manager.last_cookie_refresh_time = time.time() + refresh_jitter
-                    refresh_delay = token_manager.cookie_refresh_interval + refresh_jitter
+                    refresh_delay = token_manager._effective_cookie_interval() + refresh_jitter
                     logger.warning(
                         f"【{self.cookie_id}】启动阶段使用过期Token缓存连接，"
                         f"将在约{refresh_delay:.0f}秒后自动刷新Token"

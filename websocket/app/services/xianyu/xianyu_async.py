@@ -2674,7 +2674,8 @@ class XianyuAsync:
                                 'skipped_risk_control_check_failed',
                                 'skipped_startup_cache_lookup_failed',
                             ):
-                                sleep_duration = self.token_manager.cookie_refresh_interval
+                                # 与 Cookie 刷新主循环同一节奏：含退避阶梯（滑块失败后 1h→2h→3h）
+                                sleep_duration = self.token_manager._effective_cookie_interval()
                             else:
                                 sleep_duration = 21600  # 6小时
                             await self._interruptible_sleep(sleep_duration)
