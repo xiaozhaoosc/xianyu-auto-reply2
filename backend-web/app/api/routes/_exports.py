@@ -18,6 +18,7 @@ from . import (
     auto_reply_logs,
     auth,
     auto_rate,
+    migration,
     blacklist,
     captcha,
     cards,
@@ -141,6 +142,7 @@ api_router.include_router(notifications.messages_router, tags=["通知管理"]) 
 
 # 自动化功能
 api_router.include_router(auto_rate.router, prefix="/auto-rate", tags=["自动评价"])
+api_router.include_router(migration.router, prefix="/migration", tags=["商品迁移"])
 
 # 系统设置
 api_router.include_router(system_settings.router, prefix="/system-settings", tags=["系统设置"])

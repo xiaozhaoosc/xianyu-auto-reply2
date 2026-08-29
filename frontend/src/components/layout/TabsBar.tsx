@@ -30,6 +30,7 @@ const routeTitles: Record<string, string> = {
   '/dashboard': '仪表盘',
   '/accounts': '账号管理',
   '/items': '商品管理',
+  '/migration': '商品迁移',
   '/keywords': '自动回复',
   '/orders': '订单管理',
   '/message-logs': '消息日志',

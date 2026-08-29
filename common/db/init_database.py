@@ -237,6 +237,13 @@ class DatabaseInitializer:
             "定时补评价任务",
         ),
         (
+            "migration_publish",
+            "商品迁移发布任务",
+            60,
+            True,
+            "按批次随机间隔(3~10分钟)逐个发布迁移商品",
+        ),
+        (
             "polish",
             "擦亮任务",
             60,
@@ -1091,6 +1098,64 @@ class DatabaseInitializer:
                 INDEX idx_cir_user_item (user_id, item_id),
                 UNIQUE KEY uk_card_item_dock (card_id, item_id, dock_record_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='卡券商品关联表';
+        """,
+
+        "xy_migration_batches": """
+            CREATE TABLE IF NOT EXISTS xy_migration_batches (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '批次ID',
+                owner_id BIGINT NOT NULL COMMENT '所属用户ID',
+                source_account_id VARCHAR(64) NOT NULL COMMENT '源闲鱼账号ID',
+                target_account_id VARCHAR(64) NOT NULL COMMENT '目标闲鱼账号ID',
+                status VARCHAR(20) NOT NULL DEFAULT 'prepared' COMMENT '状态: prepared/running/paused/done/cancelled',
+                description_template TEXT COMMENT '描述模板(支持{title}占位符)',
+                total INT DEFAULT 0 COMMENT '商品总数',
+                published INT DEFAULT 0 COMMENT '已发布数',
+                failed INT DEFAULT 0 COMMENT '失败数',
+                min_interval INT DEFAULT 180 COMMENT '最小间隔秒',
+                max_interval INT DEFAULT 600 COMMENT '最大间隔秒',
+                next_run_at DATETIME NULL COMMENT '下一次发布时间',
+                last_error TEXT COMMENT '最近错误',
+                started_at DATETIME NULL COMMENT '开始时间',
+                finished_at DATETIME NULL COMMENT '完成时间',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_mig_batch_owner_status (owner_id, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品迁移批次表';
+        """,
+
+        "xy_migration_tasks": """
+            CREATE TABLE IF NOT EXISTS xy_migration_tasks (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '任务ID',
+                batch_id BIGINT NOT NULL COMMENT '批次ID',
+                source_item_id VARCHAR(64) NOT NULL COMMENT '源商品ID',
+                title VARCHAR(255) NOT NULL COMMENT '商品标题',
+                price VARCHAR(32) NULL COMMENT '价格',
+                category_id VARCHAR(32) NULL COMMENT '类目ID',
+                description TEXT COMMENT '发布描述(可编辑)',
+                images_json LONGTEXT COMMENT '原始CDN图片URL列表(JSON)',
+                local_images_json LONGTEXT COMMENT '本地化图片路径列表(JSON)',
+                status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '状态: pending/publishing/done/failed/skipped',
+                new_item_id VARCHAR(64) NULL COMMENT '发布后的新商品ID',
+                error TEXT COMMENT '错误信息',
+                attempts INT DEFAULT 0 COMMENT '已尝试次数',
+                max_attempts INT DEFAULT 2 COMMENT '最大尝试次数',
+                published_at DATETIME NULL COMMENT '发布完成时间',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_mig_task_batch_status (batch_id, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品迁移任务表';
+        """,
+
+        "xy_migration_card_maps": """
+            CREATE TABLE IF NOT EXISTS xy_migration_card_maps (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
+                batch_id BIGINT NOT NULL COMMENT '批次ID',
+                source_card_id BIGINT NOT NULL COMMENT '源卡券ID',
+                new_card_id BIGINT NOT NULL COMMENT '新卡券ID',
+                card_name VARCHAR(255) NULL COMMENT '卡券名称',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                INDEX idx_mig_cardmap_batch (batch_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='迁移卡券映射表';
         """,
 
         # 29. 对接记录表
