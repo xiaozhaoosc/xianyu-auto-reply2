@@ -44,7 +44,7 @@ TASK_CODE_AUTO_ORDER = "auto_order"
 # 默认配置（数据库无配置时使用）
 DEFAULT_CONFIGS = {
     TASK_CODE_REDELIVERY: {"interval_seconds": 5, "enabled": True},
-    TASK_CODE_RATE: {"interval_seconds": 20, "enabled": True},
+    TASK_CODE_RATE: {"interval_seconds": 7200, "enabled": True},
     TASK_CODE_POLISH: {"interval_seconds": 60, "enabled": True},
     TASK_CODE_DAY_SWITCH: {"interval_seconds": 60, "enabled": True},
     TASK_CODE_CLEANUP_BROWSER_DATA: {"interval_seconds": 600, "enabled": False},

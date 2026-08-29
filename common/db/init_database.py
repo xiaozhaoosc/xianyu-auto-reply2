@@ -232,7 +232,7 @@ class DatabaseInitializer:
         (
             "rate",
             "补评价任务",
-            20,
+            7200,
             True,
             "定时补评价任务",
         ),

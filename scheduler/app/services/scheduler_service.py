@@ -285,7 +285,7 @@ class SchedulerService:
                     ),
                 },
                 TASK_CODE_RATE: {
-                    "config": rate_config or {"interval_seconds": 20, "enabled": True},
+                    "config": rate_config or {"interval_seconds": 7200, "enabled": True},
                     "task_running": (
                         self._rate_task_handle is not None 
                         and not self._rate_task_handle.done()
@@ -543,9 +543,9 @@ class SchedulerService:
         while self._running:
             config = ScheduledTaskService.get_cached_config(TASK_CODE_RATE)
             if not config:
-                config = {"interval_seconds": 20, "enabled": True}
+                config = {"interval_seconds": 7200, "enabled": True}
             
-            interval = config.get("interval_seconds", 20)
+            interval = config.get("interval_seconds", 7200)
             enabled = config.get("enabled", True)
             
             if enabled:
