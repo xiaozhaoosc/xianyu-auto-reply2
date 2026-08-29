@@ -852,7 +852,7 @@ class PlaywrightSliderService:
             import threading
             guard_seconds = browser_timeout
             if manual_mode:
-                guard_seconds += manual_wait_seconds or 120
+                guard_seconds += manual_wait_seconds or 300
             elif manual_wait_seconds > 0:
                 guard_seconds += manual_wait_seconds
             timeout_timer = threading.Timer(guard_seconds, _force_close_on_timeout)
@@ -961,7 +961,7 @@ class PlaywrightSliderService:
 
                 # 处理滑块验证（带超时检查）
                 if manual_mode:
-                    wait_seconds = manual_wait_seconds or 120
+                    wait_seconds = manual_wait_seconds or 300
                     logger.info(
                         f"【{self.pure_user_id}】纯手动模式：跳过自动滑动，"
                         f"等待人工完成验证（最长 {wait_seconds} 秒）"
@@ -998,7 +998,7 @@ class PlaywrightSliderService:
                     return success, cookies
                 else:
                     if manual_mode or manual_wait_seconds > 0:
-                        wait_seconds = manual_wait_seconds or 120
+                        wait_seconds = manual_wait_seconds or 300
                         logger.warning(
                             f"【{self.pure_user_id}】滑块验证失败，进入人工等待模式："
                             f"请在浏览器窗口中手动完成验证（最长 {wait_seconds} 秒）"

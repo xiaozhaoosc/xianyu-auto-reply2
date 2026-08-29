@@ -181,8 +181,8 @@ class DatabaseInitializer:
         ),
         (
             "captcha.manual_wait_seconds",
-            "120",
-            "自动滑动失败后等待人工完成验证的秒数（0=不等待，直接失败）",
+            "300",
+            "自动滑动失败后等待人工完成验证的秒数（0=不等待，直接失败）。默认300秒(5分钟)，避免人工来不及响应",
         ),
         (
             "captcha.slider_notify_email",
