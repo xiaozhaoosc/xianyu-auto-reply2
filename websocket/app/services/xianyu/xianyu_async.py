@@ -123,6 +123,7 @@ class XianyuAsync:
         self.token_refresh_task = None
         self.cleanup_task = None
         self.cookie_refresh_task = None
+        self.message_watchdog_task = None
         self.background_tasks = set()
         
         # 消息处理并发控制
@@ -2477,6 +2478,9 @@ class XianyuAsync:
         
         if self.cookie_refresh_task and not self.cookie_refresh_task.done():
             tasks_to_cancel.append(('Cookie刷新', self.cookie_refresh_task))
+
+        if self.message_watchdog_task and not self.message_watchdog_task.done():
+            tasks_to_cancel.append(('消息断流看门狗', self.message_watchdog_task))
         
         if tasks_to_cancel:
             logger.info(f"【{self.cookie_id}】准备取消 {len(tasks_to_cancel)} 个后台任务...")
@@ -2754,6 +2758,16 @@ class XianyuAsync:
                                 )
                             else:
                                 logger.info(f"【{self.cookie_id}】Cookie刷新任务已在运行，跳过启动")
+
+                            # 启动消息断流看门狗（检测僵尸连接：推送有消息但本连接零业务帧）
+                            if not self.message_watchdog_task or self.message_watchdog_task.done():
+                                from app.services.xianyu.message_watchdog import MessageStreamWatchdog
+                                self._message_watchdog = MessageStreamWatchdog(self)
+                                self.message_watchdog_task = asyncio.create_task(
+                                    self._message_watchdog.run()
+                                )
+                            else:
+                                logger.info(f"【{self.cookie_id}】消息断流看门狗已在运行，跳过启动")
                             
                             logger.info(f"【{self.cookie_id}】所有后台任务已启动")
                             logger.info(f"【{self.cookie_id}】开始监听WebSocket消息...")

@@ -55,6 +55,9 @@ class MessageHandler:
         self._on_order_message: Optional[Callable] = None
         self._on_card_message: Optional[Callable] = None  # 卡片消息回调（小刀等）
         self._on_card_update_message: Optional[Callable] = None  # 卡片更新消息回调（付款状态变更等）
+
+        # 消息断流看门狗：最近一次成功解密的业务帧时间戳（实例创建时刻作为基线）
+        self.last_decrypt_ts = time.time()
     
     def _load_message_expire_time(self) -> int:
         """从数据库加载当前账号的相同消息等待时间配置（参照旧框架）"""
@@ -565,6 +568,7 @@ class MessageHandler:
                 biz_type = parsed_data.get('bizType', '') if isinstance(parsed_data, dict) else ''
                 if biz_type not in ('IDLE_SPACE_PRICING',) and not self.is_system_tip_message(parsed_data):
                     logger.warning(f"【{self.cookie_id}】解密消息: {json.dumps(parsed_data, ensure_ascii=False)[:1000]}")
+                self.last_decrypt_ts = time.time()  # 看门狗：记录业务帧活跃
                 return parsed_data
             except Exception:
                 # base64解码失败，尝试使用decrypt解密
@@ -573,6 +577,7 @@ class MessageHandler:
                 biz_type = decrypted.get('bizType', '') if isinstance(decrypted, dict) else ''
                 if biz_type not in ('IDLE_SPACE_PRICING',) and not self.is_system_tip_message(decrypted):
                     logger.info(f"【{self.cookie_id}】解密消息: {json.dumps(decrypted, ensure_ascii=False)[:1000]}")
+                self.last_decrypt_ts = time.time()  # 看门狗：记录业务帧活跃
                 return decrypted
         except Exception as e:
             logger.debug(f"【{self.cookie_id}】消息解密失败: {safe_str(e)}")
