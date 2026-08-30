@@ -1085,9 +1085,19 @@ class PlaywrightSliderService:
         """
         # 通过账号绑定的通知渠道发送通知（飞书/邮箱/钉钉等，仅首次进入时发一次）
         try:
+            from common.services.captcha.trigger_context import pop_trigger_source
+            trigger_label = None
+            for _key in (self.user_id, self.pure_user_id):
+                if _key:
+                    trigger_label = pop_trigger_source(str(_key), default="")
+                    if trigger_label:
+                        break
+            if not trigger_label:
+                trigger_label = "Token刷新（自动链路，未标注入口）"
             notification_msg = (
                 f"⚠️ 滑块验证需要人工操作\n\n"
                 f"闲鱼账号: {self.pure_user_id}\n"
+                f"触发场景: {trigger_label}\n"
                 f"最长等待时间: {total_timeout} 秒\n"
                 f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 f"请在浏览器窗口中手动完成滑块验证。"

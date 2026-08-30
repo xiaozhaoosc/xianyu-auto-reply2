@@ -687,10 +687,11 @@ class CookieTokenManager:
                     return None
                 try:
                     from common.db.compat import db_manager
+                    from common.services.captcha.trigger_context import peek_trigger_source
                     log_id = db_manager.add_risk_control_log(
                         cookie_id=self.cookie_id,
                         event_type='slider_captcha',
-                        event_description=f'触发场景: Token刷新, URL: {verification_url}',
+                        event_description=f'触发场景: {peek_trigger_source(self.cookie_id)}, URL: {verification_url}',
                         processing_status='processing'
                     )
                     if log_id:

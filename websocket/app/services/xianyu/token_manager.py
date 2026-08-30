@@ -28,11 +28,11 @@ class TokenManager:
 
     @staticmethod
     def _load_cookie_refresh_interval() -> int:
-        """读取Cookie刷新间隔（秒）。环境变量 COOKIE_REFRESH_INTERVAL 可覆盖，默认10800（3小时）"""
+        """读取Cookie刷新间隔（秒）。环境变量 COOKIE_REFRESH_INTERVAL 可覆盖，默认85200（23小时40分，2026-08-30 用户拍板）"""
         try:
-            return max(int(os.getenv("COOKIE_REFRESH_INTERVAL", "10800")), 300)
+            return max(int(os.getenv("COOKIE_REFRESH_INTERVAL", "85200")), 300)
         except (TypeError, ValueError):
-            return 10800
+            return 85200
 
     def _effective_cookie_interval(self) -> int:
         """根据连续失败次数计算当前生效的等待间隔（退避阶梯：1h→2h→3h，按基础间隔的1/3、2/3、1倍）"""
@@ -58,10 +58,10 @@ class TokenManager:
         self.current_token = None
         
         # Cookie刷新配置
-        # 间隔可通过环境变量 COOKIE_REFRESH_INTERVAL 覆盖（秒），默认 3 小时。
+        # 间隔可通过环境变量 COOKIE_REFRESH_INTERVAL 覆盖（秒），默认 23小时40分（85200，2026-08-30 用户拍板）。
         # 原硬编码 180 秒（3分钟）导致滑块被高频触发：实测单日刷新2964次、滑块332次、人工验证不断。
         self.cookie_refresh_interval = self._load_cookie_refresh_interval()
-        # 滑块/风控失败退避阶梯：失败后等待 = 基础间隔的 1/3 → 2/3 → 1 倍（默认即 1h→2h→3h 封顶）
+        # 滑块/风控失败退避阶梯：失败后等待 = 基础间隔的 1/3 → 2/3 → 1 倍（默认即 ~7.9h→15.8h→23.7h 封顶）
         base = self.cookie_refresh_interval
         self.cookie_failure_backoff = (max(base // 3, 300), max(base * 2 // 3, 600), base)
         self.cookie_consecutive_failures = 0  # 连续滑块/风控失败次数（供退避计算）
@@ -81,6 +81,14 @@ class TokenManager:
         self.browser_cookie_refreshed = False
         self.restarted_in_browser_refresh = False
     
+    def _mark_trigger_source(self, label: str):
+        """登记即将发起的Token刷新入口场景（供滑块人工告警标注触发场景用）"""
+        try:
+            from common.services.captcha.trigger_context import set_trigger_source
+            set_trigger_source(self.cookie_id, label)
+        except Exception:
+            pass
+
     async def token_refresh_loop(self):
         """Token刷新循环"""
         try:
@@ -89,6 +97,7 @@ class TokenManager:
                     await self.xianyu._interruptible_sleep(self.token_refresh_interval)
                     
                     if time.time() - self.last_token_refresh_time >= self.token_refresh_interval:
+                        self._mark_trigger_source(f"Token种子刷新循环（定时，间隔约 {int(self.token_refresh_interval/3600)} 小时）")
                         await self.xianyu.refresh_token()
                         
                 except asyncio.CancelledError:
@@ -164,7 +173,9 @@ class TokenManager:
         async with self.cookie_refresh_lock:
             try:
                 logger.info(f"【{self.cookie_id}】开始Cookie刷新任务...")
-
+                self._mark_trigger_source(
+                    f"Cookie刷新循环（定时，生效间隔 {int(self._effective_cookie_interval()/3600)} 小时）"
+                )
                 new_token = await self.xianyu.refresh_token()
                 refresh_status = getattr(self.xianyu, "last_token_refresh_status", "") or ""
 
@@ -216,6 +227,7 @@ class TokenManager:
                     # 失败后不更新 last_cookie_refresh_time，等待5秒后立即重试
                     await self.xianyu._interruptible_sleep(5)
                     logger.info(f"【{self.cookie_id}】开始重试Cookie刷新任务...")
+                    self._mark_trigger_source("Cookie刷新循环定时失败后的5秒重试")
                     retry_token = await self.xianyu.refresh_token()
                     if retry_token:
                         self.last_cookie_refresh_time = time.time()

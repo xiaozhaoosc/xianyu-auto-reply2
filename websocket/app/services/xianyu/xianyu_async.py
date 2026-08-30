@@ -491,6 +491,14 @@ class XianyuAsync:
         """
         return await self._cookie_token_manager.refresh_token(captcha_retry_count)
     
+    def _mark_refresh_trigger_source(self, label: str):
+        """登记即将发起的Token刷新入口场景（供滑块人工告警标注触发场景用）"""
+        try:
+            from common.services.captcha.trigger_context import set_trigger_source
+            set_trigger_source(self.cookie_id, label)
+        except Exception:
+            pass
+
     async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh",
                                              chat_id: str = None, attachment_path: str = None, 
                                              verification_url: str = None):
@@ -574,6 +582,7 @@ class XianyuAsync:
         # 获取token
         if not self.current_token:
             logger.info(f"【{self.cookie_id}】获取初始token...")
+            self._mark_refresh_trigger_source("实例启动获取初始Token")
             await self.refresh_token()
         
         if not self.current_token:
@@ -2614,6 +2623,7 @@ class XianyuAsync:
                     # 在WebSocket连接之前获取Token（确保Token有效）
                     if not self.current_token:
                         logger.info(f"【{self.cookie_id}】WebSocket连接前获取Token...")
+                        self._mark_refresh_trigger_source("WebSocket连接/重连前获取Token")
                         await self.refresh_token()
                         if not self.current_token:
                             # 根据 Token 刷新状态区分失败原因：
