@@ -90,6 +90,7 @@ export const mainNavItems: NavEntry[] = [
   { key: 'items', icon: Package, label: '商品管理', path: '/items' },
   { key: 'cards', icon: Ticket, label: '卡券管理', path: '/cards' },
   { key: 'migration', icon: ArrowLeftRight, label: '商品迁移', path: '/migration' },
+  { key: 'account-sync', icon: Users, label: '账号同步', path: '/account-sync' },
   { key: 'orders', icon: ShoppingCart, label: '订单管理', path: '/orders' },
   {
     key: 'distribution',
