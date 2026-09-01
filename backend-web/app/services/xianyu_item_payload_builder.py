@@ -106,14 +106,16 @@ def _build_category_label(item_data: dict[str, Any]) -> dict[str, Any]:
     channel_name = _text(item_data.get("platform_channel_category_name"))
     category_name = _text(item_data.get("platform_category_name"))
     tb_cat_id = _text(item_data.get("platform_tb_category_id"))
-    if not channel_id or not channel_name or not tb_cat_id:
+    if not channel_id or not channel_name:
         raise DirectPublishError("请先根据商品描述重新选择完整的平台商品分类")
+    # 注意：频道类目（如 电子资料/新能源 等）本身没有淘宝叶子类目 tbCatId，
+    # 与单品发布界面一致——允许为空提交为 null，而不是硬性报错。
     return {
         "channelCateName": channel_name,
         "valueId": None,
         "channelCateId": channel_id,
         "valueName": None,
-        "tbCatId": tb_cat_id,
+        "tbCatId": tb_cat_id or None,
         "subPropertyId": None,
         "labelType": "common",
         "subValueId": None,

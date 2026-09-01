@@ -8,12 +8,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   RefreshCw, Plus, Play, Pause, XCircle, Clock, AlertTriangle,
-  CheckSquare, Square, Edit2, Eye, Package, ArrowRight,
+  CheckSquare, Square, Edit2, Eye, Package, ArrowRight, RotateCcw, Tag,
 } from 'lucide-react'
 import {
   getSourceItems, createBatch, getBatches, getBatchDetail,
   startBatch, pauseBatch, cancelBatch, updateMigrationTask,
-  type SourceItem, type MigrationBatch, type MigrationTask, type BatchDetail,
+  getCategoryCandidates, retryTask,
+  type SourceItem, type MigrationBatch, type MigrationTask, type BatchDetail, type CategoryCandidate,
 } from '@/api/migration'
 import { getAccountDetails } from '@/api/accounts'
 import { useUIStore } from '@/store/uiStore'
@@ -75,6 +76,14 @@ export function Migration() {
   const [editPrice, setEditPrice] = useState('')
   const [editDesc, setEditDesc] = useState('')
   const [savingTask, setSavingTask] = useState(false)
+
+  // ===== 类目覆盖 =====
+  type OverrideChoice = { cat_name: string; channel_cat_id: string; channel_cat_name: string }
+  const [overrideChoice, setOverrideChoice] = useState<OverrideChoice | null>(null)
+  const [candTask, setCandTask] = useState<MigrationTask | null>(null)
+  const [candidates, setCandidates] = useState<CategoryCandidate[]>([])
+  const [candLoading, setCandLoading] = useState(false)
+  const [retryingId, setRetryingId] = useState<number | null>(null)
 
   const [confirm, setConfirm] = useState<{ message: string; action: () => Promise<void>; type?: 'warning' | 'danger' } | null>(null)
   const [confirmLoading, setConfirmLoading] = useState(false)
@@ -199,6 +208,51 @@ export function Migration() {
     setEditTitle(task.title)
     setEditPrice(task.price || '')
     setEditDesc(task.description || '')
+    setOverrideChoice(
+      task.category_override
+        ? {
+            cat_name: task.category_override.cat_name || '',
+            channel_cat_id: task.category_override.channel_cat_id || '',
+            channel_cat_name: task.category_override.channel_cat_name || '',
+          }
+        : null
+    )
+  }
+
+  const openCategoryModal = async (task: MigrationTask) => {
+    setCandTask(task)
+    setCandLoading(true)
+    setCandidates([])
+    try {
+      const res = await getCategoryCandidates(task.id)
+      if (res.success) {
+        setCandidates(res.data.candidates || [])
+        if (!(res.data.candidates || []).length) {
+          addToast({ type: 'warning', message: '该账号暂无可选类目候选' })
+        }
+      } else {
+        addToast({ type: 'error', message: res.message || '获取类目候选失败' })
+        setCandTask(null)
+      }
+    } catch {
+      addToast({ type: 'error', message: '获取类目候选失败' })
+      setCandTask(null)
+    } finally {
+      setCandLoading(false)
+    }
+  }
+
+  const handleRetry = async (task: MigrationTask) => {
+    setRetryingId(task.id)
+    try {
+      const res = await retryTask(task.id)
+      addToast({ type: res.success ? 'success' : 'error', message: res.message || (res.success ? '已重置重试' : '重置失败') })
+      if (res.success && detail) openDetail(detail.batch.id)
+    } catch {
+      addToast({ type: 'error', message: '重置失败' })
+    } finally {
+      setRetryingId(null)
+    }
   }
 
   const saveTask = async () => {
@@ -206,7 +260,14 @@ export function Migration() {
     setSavingTask(true)
     try {
       const res = await updateMigrationTask(editingTask.id, {
-        title: editTitle, price: editPrice, description: editDesc,
+        title: editTitle,
+        price: editPrice,
+        description: editDesc,
+        ...(overrideChoice
+          ? { category_override: overrideChoice }
+          : editingTask.category_override
+            ? { clear_category_override: true }
+            : {}),
       })
       if (res.success) {
         addToast({ type: 'success', message: '已保存' })
@@ -501,7 +562,15 @@ export function Migration() {
                             ? <img src={task.first_image} alt="" className="w-8 h-8 rounded object-cover" />
                             : <span className="text-gray-300">—</span>}
                         </td>
-                        <td className="p-2 truncate max-w-0" title={task.title}>{task.title}</td>
+                        <td className="p-2 truncate max-w-0" title={task.title}>
+                          {task.title}
+                          {task.category_override && (
+                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-purple-600 bg-purple-50 px-1 rounded" title={`发布时锁定该类目：${task.category_override.cat_name}`}>
+                              <Tag className="w-3 h-3" />
+                              {task.category_override.cat_name}
+                            </span>
+                          )}
+                        </td>
                         <td className="p-2">{task.price || '—'}</td>
                         <td className="p-2">
                           <span className={`text-xs px-2 py-0.5 rounded-full ${taskStatusMeta[task.status].cls}`}>
@@ -513,11 +582,23 @@ export function Migration() {
                         </td>
                         <td className="p-2 text-xs font-mono text-gray-500">{task.new_item_id || '—'}</td>
                         <td className="p-2">
-                          {task.status === 'pending' && (
-                            <button onClick={() => openEditTask(task)} className="text-blue-500 hover:text-blue-700" title="编辑">
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {(task.status === 'pending' || task.status === 'failed') && (
+                              <button onClick={() => openEditTask(task)} className="text-blue-500 hover:text-blue-700" title="编辑">
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                            )}
+                            {(task.status === 'failed' || task.status === 'skipped') && (
+                              <button
+                                onClick={() => handleRetry(task)}
+                                disabled={retryingId === task.id}
+                                className="text-green-500 hover:text-green-700 disabled:opacity-40"
+                                title="重新发布该商品"
+                              >
+                                <RotateCcw className={`w-4 h-4 ${retryingId === task.id ? 'animate-spin' : ''}`} />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -551,6 +632,35 @@ export function Migration() {
                 <input value={editPrice} onChange={e => setEditPrice(e.target.value)} className="input-ios" />
               </div>
               <div className="input-group">
+                <label className="input-label">发布类目（不改标题，只改归类）</label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-700 flex-1">
+                    {overrideChoice ? overrideChoice.cat_name : '自动推荐（闲鱼首选类目）'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => editingTask && openCategoryModal(editingTask)}
+                    className="btn-ios-secondary text-xs px-2 py-1"
+                  >
+                    {overrideChoice ? '更换' : '选择类目'}
+                  </button>
+                  {overrideChoice && (
+                    <button
+                      type="button"
+                      onClick={() => setOverrideChoice(null)}
+                      className="text-xs text-gray-400 hover:text-red-500"
+                    >
+                      清除
+                    </button>
+                  )}
+                </div>
+                {overrideChoice?.cat_name.match(/图书|书|教材|小说|文学|杂志|报刊|绘本/) && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    提示：图书类类目通常要求 ISBN 条码，需手工扫码发布；建议选择电子资料/服务等虚拟类目。
+                  </p>
+                )}
+              </div>
+              <div className="input-group">
                 <label className="input-label">描述</label>
                 <textarea rows={6} value={editDesc} onChange={e => setEditDesc(e.target.value)} className="input-ios resize-none" />
               </div>
@@ -560,6 +670,68 @@ export function Migration() {
               <button onClick={saveTask} disabled={savingTask} className="btn-ios-primary">
                 {savingTask ? '保存中...' : '保存'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 类目候选选择弹窗 ===== */}
+      {candTask && (
+        <div className="modal-overlay" style={{ zIndex: 60 }} onClick={() => setCandTask(null)}>
+          <div className="modal-content max-w-md w-full" onClick={e => e.stopPropagation()}>
+            <div className="modal-header flex items-center justify-between">
+              <h3 className="text-lg font-semibold">选择发布类目</h3>
+              <button onClick={() => setCandTask(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div className="modal-body">
+              <p className="text-xs text-gray-400 mb-3">
+                基于当前标题/描述向闲鱼工作台实时请求的候选类目。商品标题、描述均不变——仅改变它在新账号上的归类。
+              </p>
+              {candLoading && <p className="text-sm text-gray-400 py-6 text-center">正在请求闲鱼类目候选…</p>}
+              {!candLoading && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {candidates.map((c, idx) => {
+                    const name = c.cat_name || c.channel_cat_name || '未名类目'
+                    const channelOk = !!c.channel_cat_id
+                    return (
+                      <label
+                        key={`${c.channel_cat_id || name}-${idx}`}
+                        className={`flex items-start gap-2 p-2 rounded border cursor-pointer transition-colors
+                          ${overrideChoice?.channel_cat_id === c.channel_cat_id ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-blue-200'}
+                          ${!channelOk ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="category-pick"
+                          className="mt-1"
+                          disabled={!channelOk}
+                          checked={overrideChoice?.channel_cat_id === c.channel_cat_id}
+                          onChange={() => {
+                            if (!channelOk) return
+                            setOverrideChoice({
+                              cat_name: name,
+                              channel_cat_id: c.channel_cat_id!,
+                              channel_cat_name: c.channel_cat_name || name,
+                            })
+                            setCandTask(null)
+                          }}
+                        />
+                        <span className="flex-1">
+                          <span className="text-sm">{name}</span>
+                          {c.is_selected && <span className="ml-2 text-xs text-green-600">平台首选</span>}
+                          {c.may_need_isbn && <span className="ml-2 text-xs text-red-500">需 ISBN</span>}
+                          {!c.tb_cat_id && (
+                            <span className="block text-xs text-gray-400">选中后由平台二次解析即可正常发布</span>
+                          )}
+                        </span>
+                      </label>
+                    )
+                  })}
+                  {candidates.length === 0 && !candLoading && (
+                    <p className="text-sm text-gray-400 py-4 text-center">无候选</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

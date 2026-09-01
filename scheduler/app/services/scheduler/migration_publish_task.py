@@ -230,7 +230,12 @@ class MigrationPublishTask:
         return f"成功({task.source_item_id}→{new_item_id})"
 
     async def _resolve_category(self, account: XYAccount, task: MigrationTask) -> dict | None:
-        """调用类目推荐接口，取首选候选。失败返回 None"""
+        """调用类目推荐接口，取首选候选。失败返回 None
+
+        若任务带 category_override_json，则走两阶段协议锁定用户指定类目：
+        第一次推荐拿 card_list → build_category_selection 选中覆盖类目 → 第二次
+        推荐回传完整字段（tb_cat_id/leaf_id 由平台补齐）。不改标题，只改类目选定。
+        """
         try:
             from common.services.backend_web_loader import load_backend_web_class
             svc_class = load_backend_web_class(
@@ -239,20 +244,61 @@ class MigrationPublishTask:
                 class_name="PlatformCategoryService",
             )
             svc = svc_class()
-            result = await svc.recommend(
+
+            override: dict | None = None
+            raw_override = getattr(task, "category_override_json", None)
+            if raw_override:
+                try:
+                    override = json.loads(raw_override)
+                except Exception:
+                    logger.warning(f"[迁移发布] category_override JSON 解析失败，忽略覆盖: {raw_override[:100]}")
+
+            first = await svc.recommend(
                 title=task.title,
                 description=task.description or task.title,
                 cookie=account.cookie,
                 account_id=account.account_id,
                 owner_id=None,
             )
-            candidates = result.get("candidates") or []
+            candidates = first.get("candidates") or []
             if not candidates:
                 return None
-            pick = next((c for c in candidates if c.get("is_selected")), None) or candidates[0]
-            if not (pick.get("cat_id") and pick.get("channel_cat_id") and pick.get("tb_cat_id")):
+
+            if override:
+                from common.services.backend_web_loader import _load_backend_web_module
+                sel_mod = _load_backend_web_module(
+                    "app.services.platform_category_selection",
+                    "backend-web/app/services/platform_category_selection.py",
+                )
+                try:
+                    selection = sel_mod.build_category_selection(first.get("card_list") or [], override)
+                except Exception as e:
+                    logger.warning(f"[迁移发布] 类目覆盖失效(候选已变化): {override} err={e}")
+                    return None
+                second = await svc.recommend(
+                    title=task.title,
+                    description=task.description or task.title,
+                    cookie=account.cookie,
+                    account_id=account.account_id,
+                    owner_id=None,
+                    **selection,
+                )
+                candidates = second.get("candidates") or candidates
+                pick = next((c for c in candidates if c.get("is_selected")), None)
+                if pick is None:
+                    logger.warning("[迁移发布] 类目覆盖后未拿到选中候选")
+                    return None
+                logger.info(f"[迁移发布] 使用类目覆盖: {override.get('cat_name')} → "
+                            f"tb_cat_id={pick.get('tb_cat_id')} cat_id={pick.get('cat_id')}")
+            else:
+                pick = next((c for c in candidates if c.get("is_selected")), None) or candidates[0]
+
+            if not (pick.get("cat_id") and pick.get("channel_cat_id")):
                 logger.warning(f"[迁移发布] 类目候选字段不完整: {pick}")
                 return None
+            if not pick.get("tb_cat_id"):
+                # 频道类目没有淘宝叶子类目属正常（如 电子资料），放行由载荷构造为 null
+                logger.info(f"[迁移发布] 类目无 tb_cat_id(频道类目): {pick.get('cat_name')} cat_id={pick.get('cat_id')}")
             return {
                 "platform_category_id": pick.get("cat_id"),
                 "platform_category_name": pick.get("cat_name"),
