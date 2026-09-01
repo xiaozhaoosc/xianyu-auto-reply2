@@ -14,7 +14,10 @@ from typing import Any
 
 from loguru import logger
 
-from app.core.http_client import get_http_client
+# 注意：本模块会被 backend_web_loader 动态加载到 scheduler/websocket 进程，
+# 那里 `app` 解析为各进程自己的包（app.core API 不一致），因此这里不用
+# app.core.http_client，直接独立构造 httpx 客户端，保持上下文无关。
+import httpx
 
 
 REQUEST_TIMEOUT_SECONDS = 20
@@ -107,14 +110,21 @@ class AmapInputTipsService:
         }
 
         try:
-            body = await asyncio.wait_for(
-                get_http_client().get(
-                    AMAP_INPUTTIPS_URL,
-                    params=params,
-                    headers=headers,
-                ),
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
+            async with httpx.AsyncClient(
+                timeout=None,
+                follow_redirects=True,
+                trust_env=False,
+            ) as client:
+                resp = await asyncio.wait_for(
+                    client.get(
+                        AMAP_INPUTTIPS_URL,
+                        params=params,
+                        headers=headers,
+                    ),
+                    timeout=REQUEST_TIMEOUT_SECONDS,
+                )
+            resp.raise_for_status()
+            body = resp.json()
         except asyncio.TimeoutError as exc:
             logger.warning(f"高德所在地搜索超时: keywords={normalized_keywords}")
             raise AmapInputTipsError("所在地搜索超时，请稍后重试") from exc
