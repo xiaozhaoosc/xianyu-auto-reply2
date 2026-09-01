@@ -78,6 +78,16 @@ def _render_description(template: str | None, title: str) -> str:
         return f"{title}\n\n{tpl}"
 
 
+def _effective_owner(current_user: User) -> int:
+    """迁移功能按账号所有者隔离。
+
+    resolve_owner_scope 对管理员返回 None（看全量），但迁移的查询/写库都需要
+    具体 owner_id；系统内账号均挂在所属用户（当前即 admin）名下，故管理员落到自身 id。
+    """
+    owner_id, _ = resolve_owner_scope(current_user)
+    return owner_id if owner_id is not None else current_user.id
+
+
 async def _get_account_by_xianyu_id(
     db: AsyncSession, owner_id: int, xianyu_account_id: str
 ) -> XYAccount | None:
@@ -131,7 +141,7 @@ async def list_source_items(
     db: AsyncSession = Depends(deps.get_db_session),
 ):
     """预览源账号中有卡券关联的商品（迁移候选清单）"""
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
     account = await _get_account_by_xianyu_id(db, owner_id, source_account_id)
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="源账号不存在")
@@ -162,7 +172,7 @@ async def list_source_items(
             entry.card_names.append(card.name)
 
     items = sorted(grouped.values(), key=lambda x: x.item_id)
-    return ApiResponse.success(data={"total": len(items), "items": [i.model_dump() for i in items]})
+    return ApiResponse(success=True, data={"total": len(items), "items": [i.model_dump() for i in items]})
 
 
 @router.post("/batches")
@@ -172,7 +182,7 @@ async def create_batch(
     db: AsyncSession = Depends(deps.get_db_session),
 ):
     """创建迁移批次：复制卡券 + 生成迁移任务（不发布，需再调用 start）"""
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
 
     if req.source_account_id == req.target_account_id:
         raise HTTPException(status_code=400, detail="源账号与目标账号不能相同")
@@ -200,7 +210,7 @@ async def create_batch(
         wanted = set(req.item_ids)
         item_ids_with_cards = [i for i in item_ids_with_cards if i in wanted]
     if not item_ids_with_cards:
-        return ApiResponse.error(message="源账号没有带卡券关联的商品可迁移")
+        return ApiResponse(success=False, message="源账号没有带卡券关联的商品可迁移")
 
     source_card_ids = sorted({r[3] for r in rel_rows if r[0] in set(item_ids_with_cards)})
 
@@ -294,7 +304,7 @@ async def create_batch(
     if missing_material:
         logger.warning(f"[迁移] 批次{batch.id} 有 {len(missing_material)} 个商品未从列表接口取到图集，发布时会失败需跳过: {missing_material[:5]}")
 
-    return ApiResponse.success(
+    return ApiResponse(success=True, 
         data={
             "batch_id": batch.id,
             "total": created,
@@ -311,7 +321,7 @@ async def list_batches(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db_session),
 ):
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
     result = await db.execute(
         select(MigrationBatch).where(MigrationBatch.owner_id == owner_id).order_by(MigrationBatch.id.desc())
     )
@@ -336,7 +346,7 @@ async def list_batches(
             "started_at": b.started_at.isoformat() if b.started_at else None,
             "finished_at": b.finished_at.isoformat() if b.finished_at else None,
         })
-    return ApiResponse.success(data={"batches": data})
+    return ApiResponse(success=True, data={"batches": data})
 
 
 @router.get("/batches/{batch_id}")
@@ -345,7 +355,7 @@ async def get_batch(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db_session),
 ):
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
     batch = (await db.execute(
         select(MigrationBatch).where(MigrationBatch.id == batch_id, MigrationBatch.owner_id == owner_id)
     )).scalar_one_or_none()
@@ -382,7 +392,7 @@ async def get_batch(
         }
 
     now = datetime.now()
-    return ApiResponse.success(data={
+    return ApiResponse(success=True, data={
         "batch": {
             "id": batch.id,
             "source_account_id": batch.source_account_id,
@@ -409,14 +419,14 @@ async def start_batch(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db_session),
 ):
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
     batch = (await db.execute(
         select(MigrationBatch).where(MigrationBatch.id == batch_id, MigrationBatch.owner_id == owner_id)
     )).scalar_one_or_none()
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
     if batch.status not in ("prepared", "paused"):
-        return ApiResponse.error(message=f"当前状态 {batch.status} 不能启动")
+        return ApiResponse(success=False, message=f"当前状态 {batch.status} 不能启动")
 
     pending = (await db.execute(
         select(func.count(MigrationTask.id)).where(
@@ -424,7 +434,7 @@ async def start_batch(
         )
     )).scalar() or 0
     if pending == 0:
-        return ApiResponse.error(message="没有待发布的商品")
+        return ApiResponse(success=False, message="没有待发布的商品")
 
     batch.status = "running"
     batch.last_error = None
@@ -434,7 +444,7 @@ async def start_batch(
     batch.next_run_at = datetime.now().replace(microsecond=0) + _random_delta(batch)
     await db.commit()
     logger.info(f"[迁移] 批次{batch_id} 已启动，首次发布约在 {batch.next_run_at}")
-    return ApiResponse.success(
+    return ApiResponse(success=True, 
         data={"batch_id": batch_id, "next_run_at": batch.next_run_at.isoformat()},
         message=f"迁移已启动，首次发布将在 {batch.min_interval}~{batch.max_interval} 秒后随机触发",
     )
@@ -446,17 +456,17 @@ async def pause_batch(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db_session),
 ):
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
     batch = (await db.execute(
         select(MigrationBatch).where(MigrationBatch.id == batch_id, MigrationBatch.owner_id == owner_id)
     )).scalar_one_or_none()
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
     if batch.status != "running":
-        return ApiResponse.error(message=f"当前状态 {batch.status} 不能暂停")
+        return ApiResponse(success=False, message=f"当前状态 {batch.status} 不能暂停")
     batch.status = "paused"
     await db.commit()
-    return ApiResponse.success(message="已暂停（正在发布中的商品会发完当前这个）")
+    return ApiResponse(success=True, message="已暂停（正在发布中的商品会发完当前这个）")
 
 
 @router.post("/batches/{batch_id}/cancel")
@@ -465,14 +475,14 @@ async def cancel_batch(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db_session),
 ):
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
     batch = (await db.execute(
         select(MigrationBatch).where(MigrationBatch.id == batch_id, MigrationBatch.owner_id == owner_id)
     )).scalar_one_or_none()
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
     if batch.status in ("done", "cancelled"):
-        return ApiResponse.error(message=f"当前状态 {batch.status} 不能取消")
+        return ApiResponse(success=False, message=f"当前状态 {batch.status} 不能取消")
     batch.status = "cancelled"
     batch.finished_at = datetime.now()
     # 未发布的标记为 skipped
@@ -482,7 +492,7 @@ async def cancel_batch(
     for t in pending_tasks:
         t.status = "skipped"
     await db.commit()
-    return ApiResponse.success(message=f"已取消，{len(pending_tasks)} 个未发布商品标记为跳过")
+    return ApiResponse(success=True, message=f"已取消，{len(pending_tasks)} 个未发布商品标记为跳过")
 
 
 @router.put("/tasks/{task_id}")
@@ -493,7 +503,7 @@ async def update_task(
     db: AsyncSession = Depends(deps.get_db_session),
 ):
     """发布前编辑任务（仅 pending 状态可改）"""
-    owner_id, _ = resolve_owner_scope(current_user)
+    owner_id = _effective_owner(current_user)
     task = (await db.execute(
         select(MigrationTask)
         .join(MigrationBatch, MigrationBatch.id == MigrationTask.batch_id)
@@ -502,7 +512,7 @@ async def update_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task.status != "pending":
-        return ApiResponse.error(message="仅待发布状态可编辑")
+        return ApiResponse(success=False, message="仅待发布状态可编辑")
     if req.title is not None:
         task.title = req.title
     if req.price is not None:
@@ -510,7 +520,7 @@ async def update_task(
     if req.description is not None:
         task.description = req.description
     await db.commit()
-    return ApiResponse.success(message="已保存")
+    return ApiResponse(success=True, message="已保存")
 
 
 from datetime import timedelta  # noqa: E402
