@@ -36,6 +36,7 @@ from common.models.db_backup_log import DbBackupLog
 from common.models.announcement import Announcement
 from common.models.confirm_receipt_message import ConfirmReceiptMessage
 from common.models.scheduled_task import ScheduledTask
+from common.models.migration import MigrationBatch, MigrationTask, MigrationCardMap
 from common.models.card_item_relation import CardItemRelation
 from common.models.recharge_order import RechargeOrder
 from common.models.dock_code_binding import DockCodeBinding
@@ -73,6 +74,9 @@ __all__ = [
     "XYKeywordRule",
     "XYOrder",
     "Card",
+    "MigrationBatch",
+    "MigrationTask",
+    "MigrationCardMap",
     "DefaultReply",
     "DefaultReplyRecord",
     "AIChatMessage",

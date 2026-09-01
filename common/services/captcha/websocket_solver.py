@@ -28,6 +28,7 @@ async def solve_captcha_via_websocket(
     cookies: str,
     device_id: str,
     browser_timeout: int = 40,
+    source: str = "远程过滑块服务",
 ) -> dict[str, Any]:
     """调用 WebSocket 内部接口完成滑块验证。
 
@@ -54,6 +55,7 @@ async def solve_captcha_via_websocket(
         "call_type": "local",
         "cookies": cookies,
         "device_id": device_id,
+        "source": source,
     }
     if account_row_id is not None:
         payload["account_row_id"] = int(account_row_id)

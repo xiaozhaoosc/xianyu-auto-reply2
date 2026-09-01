@@ -7,6 +7,7 @@ import {
   BellOff,
   BookOpen,
   Database,
+  ArrowLeftRight,
   FileText,
   Filter,
   Flower2,
@@ -88,6 +89,7 @@ export const mainNavItems: NavEntry[] = [
   { key: 'online-chat-new', icon: MessageSquare, label: '在线聊天', path: '/online-chat-new' },
   { key: 'items', icon: Package, label: '商品管理', path: '/items' },
   { key: 'cards', icon: Ticket, label: '卡券管理', path: '/cards' },
+  { key: 'migration', icon: ArrowLeftRight, label: '商品迁移', path: '/migration' },
   { key: 'orders', icon: ShoppingCart, label: '订单管理', path: '/orders' },
   {
     key: 'distribution',

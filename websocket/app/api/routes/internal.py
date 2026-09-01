@@ -119,6 +119,7 @@ class SolveCaptchaRequest(BaseModel):
     token_user_id: str = ""       # Token 缓存用户 ID
     persist_token_cache: bool = False # 是否由 WebSocket 端完成 Token 缓存写入
     token_cache_write_mode: str = "renewal" # renewal-条件续期 / upsert-基础缓存新增或更新
+    source: str = ""                     # 触发场景标注（用于滑块人工告警，如 "scheduler·Token续期任务"）
 
 
 @router.post("/logs/retention")
@@ -389,6 +390,12 @@ async def solve_captcha(request: SolveCaptchaRequest):
     timeout = max(20, min(int(request.browser_timeout or 40), 120))
     call_type = (request.call_type or "remote").strip() or "remote"
     call_user = (request.call_user or "").strip() or None
+    source_label = (request.source or "").strip() or "远程过滑块接口"
+    try:
+        from common.services.captcha.trigger_context import set_trigger_source
+        set_trigger_source(raw_id, f"外部接口调用·{source_label}")
+    except Exception:
+        pass
     existing_cookies_str = (request.cookies or "").strip()
     device_id = (request.device_id or "").strip()
     refetched_token_result: dict[str, object] = {}

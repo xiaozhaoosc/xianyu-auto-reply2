@@ -123,6 +123,7 @@ class XianyuAsync:
         self.token_refresh_task = None
         self.cleanup_task = None
         self.cookie_refresh_task = None
+        self.message_watchdog_task = None
         self.background_tasks = set()
         
         # 消息处理并发控制
@@ -490,6 +491,14 @@ class XianyuAsync:
         """
         return await self._cookie_token_manager.refresh_token(captcha_retry_count)
     
+    def _mark_refresh_trigger_source(self, label: str):
+        """登记即将发起的Token刷新入口场景（供滑块人工告警标注触发场景用）"""
+        try:
+            from common.services.captcha.trigger_context import set_trigger_source
+            set_trigger_source(self.cookie_id, label)
+        except Exception:
+            pass
+
     async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh",
                                              chat_id: str = None, attachment_path: str = None, 
                                              verification_url: str = None):
@@ -573,6 +582,7 @@ class XianyuAsync:
         # 获取token
         if not self.current_token:
             logger.info(f"【{self.cookie_id}】获取初始token...")
+            self._mark_refresh_trigger_source("实例启动获取初始Token")
             await self.refresh_token()
         
         if not self.current_token:
@@ -2633,6 +2643,9 @@ class XianyuAsync:
         
         if self.cookie_refresh_task and not self.cookie_refresh_task.done():
             tasks_to_cancel.append(('Cookie刷新', self.cookie_refresh_task))
+
+        if self.message_watchdog_task and not self.message_watchdog_task.done():
+            tasks_to_cancel.append(('消息断流看门狗', self.message_watchdog_task))
         
         if tasks_to_cancel:
             logger.info(f"【{self.cookie_id}】准备取消 {len(tasks_to_cancel)} 个后台任务...")
@@ -2766,6 +2779,7 @@ class XianyuAsync:
                     # 在WebSocket连接之前获取Token（确保Token有效）
                     if not self.current_token:
                         logger.info(f"【{self.cookie_id}】WebSocket连接前获取Token...")
+                        self._mark_refresh_trigger_source("WebSocket连接/重连前获取Token")
                         await self.refresh_token()
                         if not self.current_token:
                             # 根据 Token 刷新状态区分失败原因：
@@ -2830,7 +2844,8 @@ class XianyuAsync:
                                 'skipped_risk_control_check_failed',
                                 'skipped_startup_cache_lookup_failed',
                             ):
-                                sleep_duration = self.token_manager.cookie_refresh_interval
+                                # 与 Cookie 刷新主循环同一节奏：含退避阶梯（滑块失败后 1h→2h→3h）
+                                sleep_duration = self.token_manager._effective_cookie_interval()
                             else:
                                 sleep_duration = 21600  # 6小时
                             await self._interruptible_sleep(sleep_duration)
@@ -2909,6 +2924,16 @@ class XianyuAsync:
                                 )
                             else:
                                 logger.info(f"【{self.cookie_id}】Cookie刷新任务已在运行，跳过启动")
+
+                            # 启动消息断流看门狗（检测僵尸连接：推送有消息但本连接零业务帧）
+                            if not self.message_watchdog_task or self.message_watchdog_task.done():
+                                from app.services.xianyu.message_watchdog import MessageStreamWatchdog
+                                self._message_watchdog = MessageStreamWatchdog(self)
+                                self.message_watchdog_task = asyncio.create_task(
+                                    self._message_watchdog.run()
+                                )
+                            else:
+                                logger.info(f"【{self.cookie_id}】消息断流看门狗已在运行，跳过启动")
                             
                             logger.info(f"【{self.cookie_id}】所有后台任务已启动")
                             logger.info(f"【{self.cookie_id}】开始监听WebSocket消息...")

@@ -1051,6 +1051,15 @@ class GoofishImClient:
                 parsed = self._push_parser.parse(decrypted)
                 if parsed is None:
                     continue
+                # 消息断流看门狗：把"推送通道有入站买家消息"的证据写入 Redis，
+                # 供自动回复连接侧比对活跃性（写失败不影响主流程）
+                if parsed.get("event") == "new_message" and not parsed.get("message", {}).get("isSelf"):
+                    try:
+                        from common.db.redis_client import get_redis_client
+                        _rc = await get_redis_client()
+                        await _rc.set(f"watchdog:push_ts:{self.account_id}", str(time.time()), ex=86400)
+                    except Exception:
+                        pass
                 for cb in self._push_callbacks:
                     try:
                         await cb(parsed)

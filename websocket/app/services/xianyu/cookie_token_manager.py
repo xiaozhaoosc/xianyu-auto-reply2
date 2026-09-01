@@ -388,7 +388,7 @@ class CookieTokenManager:
                         STARTUP_EXPIRED_CACHE_REFRESH_JITTER_SECONDS,
                     )
                     token_manager.last_cookie_refresh_time = time.time() + refresh_jitter
-                    refresh_delay = token_manager.cookie_refresh_interval + refresh_jitter
+                    refresh_delay = token_manager._effective_cookie_interval() + refresh_jitter
                     logger.warning(
                         f"【{self.cookie_id}】启动阶段使用过期Token缓存连接，"
                         f"将在约{refresh_delay:.0f}秒后自动刷新Token"
@@ -687,10 +687,11 @@ class CookieTokenManager:
                     return None
                 try:
                     from common.db.compat import db_manager
+                    from common.services.captcha.trigger_context import peek_trigger_source
                     log_id = db_manager.add_risk_control_log(
                         cookie_id=self.cookie_id,
                         event_type='slider_captcha',
-                        event_description=f'触发场景: Token刷新, URL: {verification_url}',
+                        event_description=f'触发场景: {peek_trigger_source(self.cookie_id)}, URL: {verification_url}',
                         processing_status='processing'
                     )
                     if log_id:

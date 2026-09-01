@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -31,8 +32,9 @@ from common.utils.cookie_refresh import clear_cookie_refresh_snapshot
 from common.utils.time_utils import get_beijing_now_naive
 
 
-# 账号之间的请求间隔（秒），避免短时间内集中请求
-ACCOUNT_REQUEST_INTERVAL_SECONDS = 1
+# 账号之间的请求间隔（秒），避免短时间内集中请求；随机错峰，防止多账号同时触发风控挑战
+ACCOUNT_REQUEST_INTERVAL_MIN = 60
+ACCOUNT_REQUEST_INTERVAL_MAX = 600
 # 接口返回内容最大保存长度（避免 TEXT 列过大）
 MAX_RESPONSE_CONTENT_LENGTH = 2000
 # 视为"禁用"的账号状态集合
@@ -125,9 +127,11 @@ class ApiCookieRenewTaskService:
                             ),
                         )
 
-                    # 账号之间间隔，避免请求过于密集
+                    # 账号之间随机错峰间隔，避免请求过于密集同一时刻触发风控
                     if index < len(accounts) - 1:
-                        await asyncio.sleep(ACCOUNT_REQUEST_INTERVAL_SECONDS)
+                        interval = random.uniform(ACCOUNT_REQUEST_INTERVAL_MIN, ACCOUNT_REQUEST_INTERVAL_MAX)
+                        logger.debug(f"【{self.task_name}】账号间隔 {interval:.1f}s")
+                        await asyncio.sleep(interval)
 
             duration_seconds = (get_beijing_now_naive() - start_time).total_seconds()
             logger.info(

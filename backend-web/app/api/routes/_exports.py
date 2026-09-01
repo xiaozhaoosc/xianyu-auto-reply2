@@ -18,10 +18,12 @@ from . import (
     auto_reply_logs,
     auth,
     auto_rate,
+    migration,
     blacklist,
     captcha,
     cards,
     card_dock,
+    dashboard,
     data_analysis,
     distribution,
     chat_new,
@@ -142,6 +144,7 @@ api_router.include_router(notifications.messages_router, tags=["通知管理"]) 
 
 # 自动化功能
 api_router.include_router(auto_rate.router, prefix="/auto-rate", tags=["自动评价"])
+api_router.include_router(migration.router, prefix="/migration", tags=["商品迁移"])
 
 # 系统设置
 api_router.include_router(system_settings.router, prefix="/system-settings", tags=["系统设置"])
@@ -181,6 +184,9 @@ api_router.include_router(shared_scan.router, tags=["共享多人扫码登录"])
 
 # 数据分析
 api_router.include_router(data_analysis.router, tags=["数据分析"])  # 已定义prefix="/data-analysis"
+
+# 飞书云文档小组件看板（只读聚合，鉴权走 X-Dashboard-Key）
+api_router.include_router(dashboard.router, tags=["飞书看板"])  # 已定义prefix="/dashboard"
 
 # Goofish相关
 api_router.include_router(goofish_compass.router, tags=["Goofish数据罗盘"])  # 已定义prefix="/compass/goofish"
