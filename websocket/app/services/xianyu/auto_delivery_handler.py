@@ -1022,7 +1022,15 @@ class AutoDeliveryHandler:
     def is_only_send_card_enabled(self) -> bool:
         """检查是否开启只发卡券、不确认发货开关"""
         return self.parent.is_only_send_card_enabled()
-    
+
+    def get_agree_deliver_config(self) -> dict:
+        """获取同意后发货配置（开关/通知信息/提货URL）"""
+        return self.parent.get_agree_deliver_config()
+
+    def is_agree_deliver_enabled(self) -> bool:
+        """检查是否开启同意后发货开关（守卫用，仅判开关）"""
+        return self.parent.is_agree_deliver_enabled()
+
     # ==================== 发货冷却检查 ====================
     
     def can_auto_delivery(self, order_id: str) -> bool:
@@ -1142,6 +1150,16 @@ class AutoDeliveryHandler:
             only_send_card_mode = self.is_only_send_card_enabled()
             skip_shipping_confirm = closed_order_card_only or only_send_card_mode
 
+            # 同意后发货：开启且提货URL非空、且预检查允许发货时，
+            # 跳过确认发货/免拼/卡券，改为发送「通知信息+提货URL」提货消息。
+            # 仅在 pre_check_action == 'allow' 时生效；关单补卡券(card_only)维持原财务保护流程。
+            agree_deliver_cfg = self.get_agree_deliver_config()
+            agree_deliver_mode = (
+                bool(agree_deliver_cfg.get('enabled'))
+                and bool((agree_deliver_cfg.get('pickup_url') or '').strip())
+                and pre_check_action == 'allow'
+            )
+
             # 将 buyer_fish_nick 保存为局部变量，避免并发场景下
             # self._current_buyer_fish_nick 被其他协程重置导致写入数据库时为空
             local_buyer_fish_nick = pre_check.get('buyer_fish_nick') or self._current_buyer_fish_nick
@@ -1220,6 +1238,73 @@ class AutoDeliveryHandler:
                 # 构造用户URL
                 user_url = f'https://www.goofish.com/personal?userId={send_user_id}'
 
+                # 同意后发货分支：不确认发货、不免拼、不发卡券，
+                # 改为把「通知信息+提货URL」拼成一条消息发给买家。
+                # 发送成功 → 参照只发卡券语义：写防重复标记、保留平台待发货状态；
+                # 发送失败 → 不写标记，仅记录失败原因，留给定时补发货重试。
+                if agree_deliver_mode:
+                    from common.utils.agree_deliver import build_agree_deliver_message, build_pickup_url
+                    # 提货URL必须带上订单号与订单表主键；主键取不到就不发提货信息，
+                    # 当成发货失败写入失败原因，交给定时补发货下一轮重试，
+                    # 避免买家收到缺参数、上游无法定位订单的提货链接。
+                    order_pk = None
+                    try:
+                        from common.db.compat import db_manager
+                        order_row = db_manager.get_order_by_id(order_id)
+                        order_pk = (order_row or {}).get('id')
+                    except Exception as e:
+                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】查询订单主键异常: {self._safe_str(e)}')
+                    if not order_pk:
+                        fail_reason = "同意后发货取不到订单主键，无法拼接提货URL"
+                        logger.error(f'[{msg_time}] 【{self.cookie_id}】❌ 订单 {order_id} {fail_reason}')
+                        await self._update_delivery_fail_reason(order_id, fail_reason)
+                        return
+                    pickup_text = build_agree_deliver_message(
+                        agree_deliver_cfg.get('notify_message'),
+                        build_pickup_url(agree_deliver_cfg.get('pickup_url'), order_id, order_pk),
+                    )
+                    if not pickup_text:
+                        fail_reason = "同意后发货未配置提货信息（通知信息与提货URL均为空）"
+                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 订单 {order_id} {fail_reason}')
+                        await self._update_delivery_fail_reason(order_id, fail_reason)
+                        return
+
+                    # 标记已发货（防重复）+ 启动延迟释放锁（仿正常发货流程）
+                    self.mark_delivery_sent(order_id)
+                    self._lock_hold_info[lock_key] = {
+                        'locked': True,
+                        'lock_time': time.time(),
+                        'release_time': None,
+                        'task': None,
+                    }
+                    delay_task = asyncio.create_task(self._delayed_lock_release(lock_key, delay_minutes=10))
+                    self._lock_hold_info[lock_key]['task'] = delay_task
+
+                    logger.info(f'[{msg_time}] 【{self.cookie_id}】订单 {order_id} 命中同意后发货，发送提货信息（不确认发货/不免拼/不发卡券）')
+                    send_ok = await self._send_text_with_separator(
+                        websocket, chat_id, send_user_id, pickup_text,
+                        msg_time=msg_time, user_url=user_url,
+                    )
+                    if send_ok:
+                        try:
+                            from common.services.order_service import OrderService
+                            from common.db.session import async_session_maker
+                            async with async_session_maker() as db_session:
+                                await OrderService(db_session).record_card_only_delivery(
+                                    order_no=order_id,
+                                    delivery_method="auto",
+                                    delivery_content=pickup_text,
+                                    buyer_fish_nick=local_buyer_fish_nick,
+                                )
+                            logger.info(f'[{msg_time}] 【{self.cookie_id}】订单 {order_id} 同意后发货完成，已写防重复标记（平台状态保持待发货）')
+                        except Exception as e:
+                            logger.error(f'[{msg_time}] 【{self.cookie_id}】订单 {order_id} 同意后发货落库失败: {self._safe_str(e)}')
+                    else:
+                        fail_reason = "同意后发货提货信息发送失败（已重试）"
+                        logger.error(f'[{msg_time}] 【{self.cookie_id}】❌ 订单 {order_id} {fail_reason}')
+                        await self._update_delivery_fail_reason(order_id, fail_reason)
+                    return
+
                 # 自动发货逻辑
                 try:
                     # 重置失败原因
@@ -1274,6 +1359,7 @@ class AutoDeliveryHandler:
                     delivery_contents = []
                     success_count = 0
                     order_already_shipped = False  # 标记订单是否已发货
+                    form_delivery_content = None  # 无需邮寄表单成功时记录凭证，但不发送聊天消息
                     # 对接卡券退化标记：多数量循环里若第 1 张匹配到对接卡券，强制 break 退化为 1 张
                     # 规避底层 _create_agent_order + settlement_service 在 N 次调用时引发的金额 bug
                     quantity_degraded_for_dock = False
@@ -1298,6 +1384,8 @@ class AutoDeliveryHandler:
                             )
                             if isinstance(delivery_result, dict):
                                 delivery_content = delivery_result.get('content')
+                                if delivery_result.get('form_only_delivered'):
+                                    form_delivery_content = delivery_content
                                 platform_shipping_confirmed = (
                                     platform_shipping_confirmed
                                     or bool(delivery_result.get('platform_shipping_confirmed'))
@@ -1351,8 +1439,27 @@ class AutoDeliveryHandler:
                         except Exception as e:
                             logger.error(f"第 {i+1}/{quantity_to_send} 个卡券获取异常: {self._safe_str(e)}")
 
+                    # 无需邮寄表单已经在确认发货接口提交成功，只落库，不再发送聊天消息。
+                    if form_delivery_content:
+                        self.mark_delivery_sent(order_id)
+                        try:
+                            from common.services.order_service import OrderService
+                            from common.db.session import async_session_maker
+                            async with async_session_maker() as db_session:
+                                await OrderService(db_session).update_order_delivery_info(
+                                    order_no=order_id,
+                                    status="shipped",
+                                    delivery_method="auto",
+                                    delivery_content=form_delivery_content,
+                                    buyer_fish_nick=local_buyer_fish_nick,
+                                )
+                            logger.info(
+                                f"【{self.cookie_id}】订单 {order_id} 已通过无需邮寄表单发货，未发送聊天消息"
+                            )
+                        except Exception as e:
+                            logger.error(f"【{self.cookie_id}】更新表单发货订单状态失败: {self._safe_str(e)}")
                     # 如果订单已发货，不需要发送通知
-                    if order_already_shipped:
+                    elif order_already_shipped:
                         logger.info(f'[{msg_time}] 【{self.cookie_id}】订单 {order_id} 已发货，无需重复处理')
                     elif delivery_contents:
                         # 标记已发货（防重复）- 基于订单ID
@@ -1833,10 +1940,14 @@ class AutoDeliveryHandler:
 
     # ==================== 确认发货 ====================
 
-    async def auto_confirm(self, order_id, item_id=None, retry_count=0):
-        """自动确认发货 - 使用重构后的确认发货服务"""
+    async def auto_confirm(self, order_id, item_id=None, retry_count=0, trade_text=None, force: bool = False):
+        """自动确认发货 - 使用重构后的确认发货服务
+
+        force=True 用于「同意后发货」买家在提货页点击「同意」后的显式发货动作：
+        绕过「只发卡券」「同意后发货」两个模式守卫，强制真实调用平台确认发货接口。
+        """
         try:
-            if self.is_only_send_card_enabled():
+            if self.is_only_send_card_enabled() and not force:
                 logger.warning(
                     f"【{self.cookie_id}】只发卡券模式已开启，拒绝调用确认发货接口: order_id={order_id}"
                 )
@@ -1844,6 +1955,18 @@ class AutoDeliveryHandler:
                     "success": False,
                     "skipped_only_send_card": True,
                     "error": "账号已开启只发卡券不确认发货",
+                    "order_id": order_id,
+                }
+            # 同意后发货纵深防御：正常入口已在调用前拦截，此处兜底防止未来新增入口漏拦导致
+            # 误调平台确认发货接口。不带 skipped_only_send_card 标记，避免调用方误转为"继续发卡券"。
+            if self.is_agree_deliver_enabled() and not force:
+                logger.warning(
+                    f"【{self.cookie_id}】同意后发货模式已开启，拒绝调用确认发货接口: order_id={order_id}"
+                )
+                return {
+                    "success": False,
+                    "skipped_agree_deliver": True,
+                    "error": "账号已开启同意后发货不确认发货",
                     "order_id": order_id,
                 }
             logger.warning(f"【{self.cookie_id}】开始确认发货，订单ID: {order_id}")
@@ -1864,7 +1987,9 @@ class AutoDeliveryHandler:
                 confirm_service = ConfirmShippingService(db_session, self.session, account_pk)
                 
                 # 调用确认方法
-                result = await confirm_service.auto_confirm(order_id, item_id, retry_count)
+                result = await confirm_service.auto_confirm(
+                    order_id, item_id, retry_count, trade_text=trade_text
+                )
                 
                 # 同步更新后的cookies
                 if confirm_service.cookies_str and confirm_service.cookies_str != self.cookies_str:
@@ -1878,10 +2003,14 @@ class AutoDeliveryHandler:
             logger.error(f"【{self.cookie_id}】确认发货模块调用失败: {self._safe_str(e)}")
             return {"error": f"确认发货模块调用失败: {self._safe_str(e)}", "order_id": order_id}
 
-    async def auto_freeshipping(self, order_id, item_id, buyer_id, retry_count=0):
-        """自动免拼发货 - 使用重构后的免拼发货服务"""
+    async def auto_freeshipping(self, order_id, item_id, buyer_id, retry_count=0, force: bool = False):
+        """自动免拼发货 - 使用重构后的免拼发货服务
+
+        force=True 用于「同意后发货」买家在提货页点击「同意」后的显式发货动作：
+        绕过「只发卡券」「同意后发货」两个模式守卫，强制真实调用平台免拼发货接口。
+        """
         try:
-            if self.is_only_send_card_enabled():
+            if self.is_only_send_card_enabled() and not force:
                 logger.warning(
                     f"【{self.cookie_id}】只发卡券模式已开启，拒绝调用免拼发货接口: order_id={order_id}"
                 )
@@ -1889,6 +2018,18 @@ class AutoDeliveryHandler:
                     "success": False,
                     "skipped_only_send_card": True,
                     "error": "账号已开启只发卡券不确认发货",
+                    "order_id": order_id,
+                }
+            # 同意后发货纵深防御：正常入口已在调用前拦截，此处兜底防止未来新增入口漏拦导致
+            # 误调平台免拼发货接口。不带 skipped_only_send_card 标记，避免调用方误转为"继续发卡券"。
+            if self.is_agree_deliver_enabled() and not force:
+                logger.warning(
+                    f"【{self.cookie_id}】同意后发货模式已开启，拒绝调用免拼发货接口: order_id={order_id}"
+                )
+                return {
+                    "success": False,
+                    "skipped_agree_deliver": True,
+                    "error": "账号已开启同意后发货不确认发货",
                     "order_id": order_id,
                 }
             logger.warning(f"【{self.cookie_id}】开始免拼发货，订单ID: {order_id}")
@@ -1993,6 +2134,7 @@ class AutoDeliveryHandler:
         '等待您发货',
         '我已付款，等待你发货',
         '我已付款，等待您发货',
+        '我已付款，请添加自提信息',
         '已付款，待发货',
         '记得及时发货',
         '我已拍下，待付款',
@@ -2144,6 +2286,7 @@ class AutoDeliveryHandler:
                 'card_image_urls': card.get('image_urls'),  # 多图片URL列表
                 'card_api_config': card.get('api_config'),
                 'card_delay_seconds': card.get('delay_seconds', 0),
+                'use_no_logistics_form': bool(card.get('use_no_logistics_form', False)),
                 'card_description': card.get('description'),
                 'is_multi_spec': card.get('is_multi_spec', False),
                 'spec_name': card.get('spec_name'),
@@ -2166,6 +2309,16 @@ class AutoDeliveryHandler:
                 await asyncio.sleep(delay_seconds)
                 logger.info(f"延时完成")
 
+            use_no_logistics_form = rule.get('use_no_logistics_form', False)
+            form_trade_text = str(rule.get('card_text_content') or '').strip()
+            if use_no_logistics_form:
+                if rule['card_type'] != 'text' or not form_trade_text:
+                    self._last_delivery_fail_reason = "无需邮寄表单发货仅支持非空的固定文字卡券"
+                    return None
+                if not order_id or skip_confirm or not self.is_auto_confirm_enabled():
+                    self._last_delivery_fail_reason = "无需邮寄表单发货需要订单ID并开启自动确认发货"
+                    return None
+
             # 如果调用方明确指示跳过确认发货（如"禁止发货 + 关闭订单后只发卡券"场景），
             # 直接跳过 confirm 步骤，但仍要继续走下方的卡券生成与发送流程。
             if skip_confirm and order_id:
@@ -2177,7 +2330,11 @@ class AutoDeliveryHandler:
             # 如果开启了"卡券发送成功再确认发货"开关，跳过此处的确认发货，
             # 由外层 _handle_auto_delivery 在卡券发送成功后再执行确认发货。
             # 前提：自动确认发货必须开启，否则整个发货流程都不应执行。
-            send_before_confirm_mode = not skip_confirm and self.is_send_before_confirm_enabled()
+            send_before_confirm_mode = (
+                not use_no_logistics_form
+                and not skip_confirm
+                and self.is_send_before_confirm_enabled()
+            )
             if send_before_confirm_mode and order_id:
                 if not self.is_auto_confirm_enabled():
                     self._last_delivery_fail_reason = f"自动确认发货已关闭，且卡券发送成功再确认发货开关已开启，无法发送卡券"
@@ -2211,8 +2368,15 @@ class AutoDeliveryHandler:
 
                     if should_confirm:
                         logger.info(f"开始自动确认发货: 订单ID={order_id}, 商品ID={item_id}")
-                        confirm_result = await self.auto_confirm(order_id, item_id)
+                        confirm_result = await self.auto_confirm(
+                            order_id,
+                            item_id,
+                            trade_text=form_trade_text if use_no_logistics_form else None,
+                        )
                         if confirm_result.get('skipped_only_send_card'):
+                            if use_no_logistics_form:
+                                self._last_delivery_fail_reason = "只发卡券模式已开启，无法提交无需邮寄表单"
+                                return None
                             skipped_only_send_card = True
                             skip_confirm = True
                             logger.info(
@@ -2257,6 +2421,9 @@ class AutoDeliveryHandler:
                         else:
                             confirm_error = confirm_result.get('error', '未知错误')
                             logger.warning(f"⚠️ 自动确认发货失败: {confirm_error}")
+                            if use_no_logistics_form:
+                                self._last_delivery_fail_reason = f"无需邮寄表单发货失败: {confirm_error}"
+                                return None
                             # 检查“发货成功再发卡券”开关，如果开启则不发送卡券
                             if self.is_confirm_before_send_enabled():
                                 self._last_delivery_fail_reason = f"自动确认发货失败，发货成功再发卡券开关已开启，不发送卡券: {confirm_error}"
@@ -2416,6 +2583,9 @@ class AutoDeliveryHandler:
                     logger.warning(f"卡券没有配置图片和文字内容: 卡券ID={rule['card_id']}")
                     delivery_content = None
 
+                if use_no_logistics_form:
+                    delivery_content = form_trade_text
+
                 if delivery_content:
                     # 增加发货次数统计
                     db_manager.increment_delivery_count(rule['card_id'])
@@ -2439,6 +2609,7 @@ class AutoDeliveryHandler:
                         'content': delivery_content,
                         'platform_shipping_confirmed': platform_shipping_confirmed,
                         'skipped_only_send_card': skipped_only_send_card,
+                        'form_only_delivered': use_no_logistics_form,
                     }
                 else:
                     self._last_delivery_fail_reason = f"获取发货内容失败: 卡券ID={rule['card_id']}, 卡券名称={rule.get('card_name')}, 类型={rule.get('card_type')}"

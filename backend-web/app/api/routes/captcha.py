@@ -57,6 +57,10 @@ class SendCodeRequest(BaseModel):
     email: EmailStr
     session_id: Optional[str] = None
     type: str = "register"  # register, login 或 reset_password
+    # 极验滑动验证参数（仅忘记密码 reset_password 场景使用，参照登录逻辑）
+    geetest_challenge: Optional[str] = None
+    geetest_validate: Optional[str] = None
+    geetest_seccode: Optional[str] = None
 
 
 class SliderSolveRequest(BaseModel):
@@ -100,7 +104,7 @@ REMOTE_CONFIG_WEIGHT_REMOTE_KEY = "captcha.real_mouse_weight_remote"
 
 # Token获取方式专用域名：这些是取Token的远程接口地址，不属于过滑块远程服务，
 # 误填到风控日志的远程服务URL会导致过滑块一直失败，因此保存时直接拦截。
-TOKEN_API_ONLY_DOMAINS = ("api.xianyusite.shop", "api.zhinianblog.cn")
+TOKEN_API_ONLY_DOMAINS = ("api.xianyushop.shop", "api.xianyusite.shop", "api.zhinianblog.cn")
 
 
 def _check_token_api_domain(url: str) -> Optional[ApiResponse]:
@@ -382,10 +386,26 @@ async def send_email_verification_code(
     """发送邮箱验证码"""
     try:
         cleanup_expired_email_codes()
-        
+
         from app.services.user_service import UserService
         user_service = UserService(db)
-        
+
+        # 忘记密码场景：参照登录逻辑，开启滑动验证时必须先通过极验二次验证
+        if request.type == "reset_password":
+            setting_service = SystemSettingService(db)
+            all_settings = await setting_service.list_settings()
+            captcha_enabled_str = all_settings.get("login_captcha_enabled")
+            captcha_enabled = captcha_enabled_str in (None, "true", "1")  # 默认开启
+            if captcha_enabled:
+                from app.api.routes.geetest import check_geetest_verified
+
+                if not request.geetest_challenge:
+                    return ApiResponse(success=False, message="请完成滑动验证")
+
+                geetest_ok, geetest_msg = check_geetest_verified(request.geetest_challenge)
+                if not geetest_ok:
+                    return ApiResponse(success=False, message=geetest_msg)
+
         # 根据类型检查邮箱
         if request.type == "register":
             existing_user = await user_service.get_by_email(request.email)
