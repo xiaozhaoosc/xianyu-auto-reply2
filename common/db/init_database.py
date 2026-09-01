@@ -2150,6 +2150,9 @@ class DatabaseInitializer:
         "xy_account_login_logs": [
             ("updated_cookie_names", "VARCHAR(500) DEFAULT NULL COMMENT '接口续期更新的Cookie字段名（逗号分隔）'", "error_message"),
         ],
+        "xy_migration_tasks": [
+            ("category_override_json", "TEXT DEFAULT NULL COMMENT '类目覆盖(JSON)'", "category_id"),
+        ],
     }
 
     async def init_all(self):

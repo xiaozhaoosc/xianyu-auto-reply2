@@ -34,6 +34,7 @@ export interface MigrationTask {
   title: string
   price?: string
   category_id?: string
+  category_override?: { cat_name?: string; channel_cat_id?: string; channel_cat_name?: string } | null
   description?: string
   image_count: number
   first_image?: string | null
@@ -42,6 +43,16 @@ export interface MigrationTask {
   error?: string | null
   attempts: number
   published_at?: string | null
+}
+
+export interface CategoryCandidate {
+  cat_id?: string | null
+  cat_name?: string | null
+  channel_cat_id?: string | null
+  channel_cat_name?: string | null
+  tb_cat_id?: string | null
+  is_selected: boolean
+  may_need_isbn: boolean
 }
 
 export interface BatchDetail {
@@ -92,10 +103,28 @@ export const cancelBatch = (batchId: number): Promise<{ success: boolean; messag
   return post(`${MIGRATION_PREFIX}/batches/${batchId}/cancel`)
 }
 
-// 编辑任务（发布前）
+// 编辑任务（发布前/失败后可改）
 export const updateMigrationTask = (
   taskId: number,
-  req: { title?: string; price?: string; description?: string }
+  req: {
+    title?: string
+    price?: string
+    description?: string
+    category_override?: { cat_name: string; channel_cat_id: string; channel_cat_name?: string }
+    clear_category_override?: boolean
+  }
 ): Promise<{ success: boolean; message: string }> => {
   return put(`${MIGRATION_PREFIX}/tasks/${taskId}`, req)
+}
+
+// 获取任务可选类目候选（走闲鱼工作台推荐接口，一轮）
+export const getCategoryCandidates = (
+  taskId: number
+): Promise<{ success: boolean; message?: string; data: { candidates: CategoryCandidate[] } }> => {
+  return get(`${MIGRATION_PREFIX}/tasks/${taskId}/category-candidates`)
+}
+
+// 重置失败/跳过任务重新发布
+export const retryTask = (taskId: number): Promise<{ success: boolean; message: string }> => {
+  return post(`${MIGRATION_PREFIX}/tasks/${taskId}/retry`)
 }

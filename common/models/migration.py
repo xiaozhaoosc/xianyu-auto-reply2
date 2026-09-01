@@ -60,6 +60,7 @@ class MigrationTask(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False, comment="商品标题")
     price: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="价格")
     category_id: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="类目ID")
+    category_override_json: Mapped[str | None] = mapped_column(Text, nullable=True, comment="类目覆盖(JSON)：{cat_name,channel_cat_id,channel_cat_name}，非空则发布时用两阶段协议锁定该类目，不再走自动推荐首选")
     description: Mapped[str | None] = mapped_column(Text, nullable=True, comment="发布描述(可编辑)")
     images_json: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True, comment="原始CDN图片URL列表(JSON)")
     local_images_json: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True, comment="本地化图片路径列表(JSON)")

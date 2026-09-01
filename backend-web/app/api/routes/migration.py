@@ -63,6 +63,9 @@ class TaskUpdateRequest(BaseModel):
     title: Optional[str] = None
     price: Optional[str] = None
     description: Optional[str] = None
+    # 类目覆盖：{cat_name, channel_cat_id, channel_cat_name}；发布时锁定该类目（不改标题）
+    category_override: Optional[dict] = None
+    clear_category_override: bool = Field(False, description="设为 true 时清除类目覆盖")
 
 
 DEFAULT_DESCRIPTION_TEMPLATE = "{title}\n\n下单后自动发货，无需等待。\n虚拟商品售出不退，请确认后再拍。"
@@ -381,6 +384,7 @@ async def get_batch(
             "title": t.title,
             "price": t.price,
             "category_id": t.category_id,
+            "category_override": _parse_override(t.category_override_json),
             "description": t.description,
             "image_count": len(images),
             "first_image": images[0] if images else None,
@@ -511,16 +515,140 @@ async def update_task(
     )).scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if task.status != "pending":
-        return ApiResponse(success=False, message="仅待发布状态可编辑")
+    if task.status not in ("pending", "failed"):
+        return ApiResponse(success=False, message="仅待发布或失败状态可编辑")
     if req.title is not None:
         task.title = req.title
     if req.price is not None:
         task.price = req.price
     if req.description is not None:
         task.description = req.description
+    if req.clear_category_override:
+        task.category_override_json = None
+    elif req.category_override is not None:
+        cat_name = str(req.category_override.get("cat_name") or "").strip()
+        channel_cat_id = str(req.category_override.get("channel_cat_id") or "").strip()
+        channel_cat_name = str(req.category_override.get("channel_cat_name") or "").strip() or cat_name
+        if not (cat_name and channel_cat_id):
+            return ApiResponse(success=False, message="类目覆盖缺少 cat_name / channel_cat_id")
+        task.category_override_json = json.dumps(
+            {"cat_name": cat_name, "channel_cat_id": channel_cat_id, "channel_cat_name": channel_cat_name},
+            ensure_ascii=False,
+        )
     await db.commit()
     return ApiResponse(success=True, message="已保存")
+
+
+def _parse_override(raw: Optional[str]) -> Optional[dict]:
+    """解析任务上的类目覆盖JSON；无效返回 None"""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+# 闲鱼类目名中常要求 ISBN 条码的字样（用于前端提示，非硬判断）
+_BOOK_LIKE_KEYWORDS = ("图书", "书籍", "教材", "小说", "散文", "文学", "杂志", "报刊", "童书", "绘本")
+
+
+@router.get("/tasks/{task_id}/category-candidates")
+async def task_category_candidates(
+    task_id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncSession = Depends(deps.get_db_session),
+):
+    """获取该任务（基于标题/描述）的类目候选列表，供编辑向导选择覆盖类目。
+
+    仅一轮推荐，结果瞬时不落库；选定后由发布流程重新走两阶段协议。
+    """
+    owner_id = _effective_owner(current_user)
+    row = (await db.execute(
+        select(MigrationTask, MigrationBatch)
+        .join(MigrationBatch, MigrationBatch.id == MigrationTask.batch_id)
+        .where(MigrationTask.id == task_id, MigrationBatch.owner_id == owner_id)
+    )).one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task, batch = row
+    if task.status not in ("pending", "failed"):
+        return ApiResponse(success=False, message="仅待发布或失败状态支持更换类目")
+
+    account = (await db.execute(
+        select(XYAccount).where(XYAccount.account_id == batch.target_account_id)
+    )).scalar_one_or_none()
+    if not account:
+        return ApiResponse(success=False, message="目标账号不存在")
+
+    from app.services.platform_category_service import PlatformCategoryService, CategoryRecommendationError
+    try:
+        result = await PlatformCategoryService().recommend(
+            title=task.title,
+            description=task.description or task.title,
+            cookie=account.cookie,
+            account_id=account.account_id,
+            owner_id=None,
+        )
+    except CategoryRecommendationError as e:
+        return ApiResponse(success=False, message=str(e))
+
+    candidates = []
+    for c in result.get("candidates") or []:
+        name = c.get("cat_name") or c.get("channel_cat_name") or ""
+        candidates.append({
+            "cat_id": c.get("cat_id"),
+            "cat_name": c.get("cat_name"),
+            "channel_cat_id": c.get("channel_cat_id"),
+            "channel_cat_name": c.get("channel_cat_name"),
+            "tb_cat_id": c.get("tb_cat_id"),
+            "is_selected": bool(c.get("is_selected")),
+            "may_need_isbn": any(k in name for k in _BOOK_LIKE_KEYWORDS),
+        })
+    return ApiResponse(success=True, data={"candidates": candidates})
+
+
+@router.post("/tasks/{task_id}/retry")
+async def retry_task(
+    task_id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncSession = Depends(deps.get_db_session),
+):
+    """将 failed/skipped 任务重置为 pending 重发，并唤醒批次重新排队。"""
+    owner_id = _effective_owner(current_user)
+    row = (await db.execute(
+        select(MigrationTask, MigrationBatch)
+        .join(MigrationBatch, MigrationBatch.id == MigrationTask.batch_id)
+        .where(MigrationTask.id == task_id, MigrationBatch.owner_id == owner_id)
+    )).one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task, batch = row
+    if task.status not in ("failed", "skipped"):
+        return ApiResponse(success=False, message=f"当前状态 {task.status} 无需重试")
+
+    task.status = "pending"
+    task.attempts = 0
+    task.error = None
+    task.new_item_id = None
+    task.published_at = None
+
+    # 批次恢复运行并尽快发车；失败数按库中实际重算
+    failed_count = (await db.execute(
+        select(func.count(MigrationTask.id)).where(
+            MigrationTask.batch_id == batch.id, MigrationTask.status.in_(["failed", "skipped"])
+        )
+    )).scalar() or 0
+    batch.failed = failed_count
+    if batch.status != "cancelled":
+        batch.status = "running"
+        batch.finished_at = None
+        batch.next_run_at = datetime.now()
+        batch.last_error = None
+    await db.commit()
+    logger.info(f"[迁移] 任务{task_id} 已重置重试，批次{batch.id} 状态={batch.status}")
+    return ApiResponse(success=True, message="已重置为待发布，迁移循环将尽快重新发车")
 
 
 from datetime import timedelta  # noqa: E402
