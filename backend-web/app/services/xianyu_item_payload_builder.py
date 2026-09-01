@@ -290,7 +290,7 @@ async def build_item_payload(
         "tbCatId": _text(item_data.get("platform_tb_category_id")),
     }
     missing_category_fields = [
-        field for field in ("catId", "channelCatId", "tbCatId") if not category_info[field]
+        field for field in ("catId", "channelCatId") if not category_info[field]
     ]
     if missing_category_fields:
         field_names = {
@@ -302,6 +302,7 @@ async def build_item_payload(
             "平台商品分类信息不完整，缺少 "
             f"{', '.join(field_names[field] for field in missing_category_fields)}，请重新选择分类"
         )
+    # tbCatId 允许为空：频道类目（电子资料等）无淘宝叶子类目，与工作台提交流程一致提交 null
     resolved_address = await _resolve_address(item_data, snapshot)
 
     video_items: list[dict[str, Any]] = []
