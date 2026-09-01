@@ -11,6 +11,7 @@ from fastapi import APIRouter
 # 导入所有路由模块
 from . import (
     activation,
+    account_sync,
     admin,
     advertisements,
     ai,
@@ -145,6 +146,7 @@ api_router.include_router(notifications.messages_router, tags=["通知管理"]) 
 # 自动化功能
 api_router.include_router(auto_rate.router, prefix="/auto-rate", tags=["自动评价"])
 api_router.include_router(migration.router, prefix="/migration", tags=["商品迁移"])
+api_router.include_router(account_sync.router, prefix="/account-sync", tags=["账号同步"])
 
 # 系统设置
 api_router.include_router(system_settings.router, prefix="/system-settings", tags=["系统设置"])
