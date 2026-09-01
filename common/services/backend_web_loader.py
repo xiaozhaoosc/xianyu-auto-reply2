@@ -8,6 +8,7 @@ Backend-Web 共享加载器
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -39,7 +40,24 @@ def _load_backend_web_module(module_name: str, relative_path: str) -> ModuleType
     if module is None:
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+        # backend-web 内部模块间使用绝对导入 `app.services.xxx`；在 scheduler/websocket
+        # 等外部进程中 `app` 会被解析到各进程自己的 app 包导致 ModuleNotFoundError。
+        # 此时把缺失的兄弟文件从 backend-web 按同路径加载并注册到 sys.modules 的
+        # `app.services.xxx` 键上（import 机制命中 sys.modules 即直接返回），随后重试。
+        for _ in range(10):
+            try:
+                spec.loader.exec_module(module)
+                break
+            except ModuleNotFoundError as e:
+                missing = e.name or ""
+                m = re.fullmatch(r"app\.services\.([A-Za-z0-9_.]+)", missing)
+                if not m:
+                    raise
+                dep_rel = "backend-web/app/services/" + m.group(1).replace(".", "/") + ".py"
+                dep_path = _get_repo_root() / dep_rel
+                if not dep_path.exists():
+                    raise
+                _load_backend_web_module(missing, dep_rel)
     return module
 
 
