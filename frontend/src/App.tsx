@@ -77,6 +77,14 @@ const MonitorItems = React.lazy(() => import('@/pages/product-monitor/MonitorIte
 const OrderFallbackAccount = React.lazy(() => import('@/pages/product-monitor/OrderFallbackAccount').then(m => ({ default: m.OrderFallbackAccount })))
 const CollectFallbackAccount = React.lazy(() => import('@/pages/product-monitor/CollectFallbackAccount').then(m => ({ default: m.CollectFallbackAccount })))
 
+// 线索池页面懒加载
+const LeadOverview = React.lazy(() => import('@/pages/lead-capture/LeadOverview').then(m => ({ default: m.LeadOverview })))
+const LeadComments = React.lazy(() => import('@/pages/lead-capture/LeadComments').then(m => ({ default: m.LeadComments })))
+const LeadItems = React.lazy(() => import('@/pages/lead-capture/LeadItems').then(m => ({ default: m.LeadItems })))
+const LeadTasks = React.lazy(() => import('@/pages/lead-capture/LeadTasks').then(m => ({ default: m.LeadTasks })))
+const LeadLogs = React.lazy(() => import('@/pages/lead-capture/LeadLogs').then(m => ({ default: m.LeadLogs })))
+const LeadProbe = React.lazy(() => import('@/pages/lead-capture/LeadProbe').then(m => ({ default: m.LeadProbe })))
+
 // 管理员页面懒加载
 const Users = React.lazy(() => import('@/pages/admin/Users').then(m => ({ default: m.Users })))
 const Logs = React.lazy(() => import('@/pages/admin/Logs').then(m => ({ default: m.Logs })))
@@ -385,6 +393,13 @@ function App() {
             <Route path="product-monitor/items" element={<MonitorItems />} />
             <Route path="product-monitor/order-fallback-accounts" element={<OrderFallbackAccount />} />
             <Route path="product-monitor/collect-fallback-accounts" element={<CollectFallbackAccount />} />
+            {/* 线索池 */}
+            <Route path="lead-capture/overview" element={<LeadOverview />} />
+            <Route path="lead-capture/comments" element={<LeadComments />} />
+            <Route path="lead-capture/items" element={<LeadItems />} />
+            <Route path="lead-capture/tasks" element={<LeadTasks />} />
+            <Route path="lead-capture/logs" element={<LeadLogs />} />
+            <Route path="lead-capture/probe" element={<LeadProbe />} />
             <Route path="personal-settings" element={<PersonalSettings />} />
             <Route path="blacklist" element={<Blacklist />} />
             <Route path="settings" element={<Settings />} />

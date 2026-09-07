@@ -48,6 +48,7 @@ from . import (
     health,
     items,
     keywords,
+    lead_capture,
     message,
     message_filters,
     notifications,
@@ -117,6 +118,7 @@ api_router.include_router(publish_addresses.router, tags=["商品发布随机地
 api_router.include_router(personal_addresses.router, tags=["个人发布地址库"])  # 已定义prefix="/product-publish/personal-addresses"
 api_router.include_router(listing_monitor_category.router, tags=["商品监控分类"])  # 已定义prefix="/product-monitor/categories"
 api_router.include_router(listing_monitor.router, tags=["商品上新监控"])  # 已定义prefix="/product-monitor/listing-tasks"
+api_router.include_router(lead_capture.router, tags=["线索池"])  # 已定义prefix="/lead-capture"
 api_router.include_router(collect_fallback_account.router, tags=["兜底采集账号"])  # 已定义prefix="/product-monitor/collect-fallback-accounts"
 api_router.include_router(order_fallback_account.router, tags=["兜底下单账号"])  # 已定义prefix="/product-monitor/order-fallback-accounts"
 api_router.include_router(external_cookie.router, tags=["外部Cookie同步"])  # 已定义prefix="/external/account-cookie"

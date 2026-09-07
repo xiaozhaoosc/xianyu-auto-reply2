@@ -43,6 +43,7 @@ TASK_CODE_DM_SEND = "dm_send"
 TASK_CODE_AUTO_ORDER = "auto_order"
 TASK_CODE_IMAGE_CLEANUP = "image_cleanup"
 TASK_CODE_MIGRATION_PUBLISH = "migration_publish"
+TASK_CODE_LEAD_COMMENT_SCAN = "lead_comment_scan"
 
 # 默认配置（数据库无配置时使用）
 DEFAULT_CONFIGS = {
@@ -70,6 +71,8 @@ DEFAULT_CONFIGS = {
     TASK_CODE_AUTO_ORDER: {"interval_seconds": 60, "enabled": True},
     TASK_CODE_IMAGE_CLEANUP: {"interval_seconds": 1200, "enabled": True},
     TASK_CODE_MIGRATION_PUBLISH: {"interval_seconds": 60, "enabled": True},
+    # 线索评论扫描：外层循环仅负责轮询到期检查，实际单任务有自身 interval_minutes（最低30分钟）
+    TASK_CODE_LEAD_COMMENT_SCAN: {"interval_seconds": 300, "enabled": True},
 }
 
 

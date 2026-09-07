@@ -131,7 +131,7 @@ async def trigger_task(task_code: str):
     """
     try:
         # 验证任务代码
-        if task_code not in ["redelivery", "rate", "polish", "day_switch", "cleanup_browser_data", "cleanup_unconfigured_browser_data", "fetch_orders", "fetch_pending_orders", "fetch_refund_orders", "fetch_items", "login_renew", "token_renewal", "cookies_refresh", "api_cookie_renew", "close_notice", "red_flower", "db_backup", "delivery_timeout", "listing_monitor", "seller_fill", "dm_send", "auto_order", "image_cleanup"]:
+        if task_code not in ["redelivery", "rate", "polish", "day_switch", "cleanup_browser_data", "cleanup_unconfigured_browser_data", "fetch_orders", "fetch_pending_orders", "fetch_refund_orders", "fetch_items", "login_renew", "token_renewal", "cookies_refresh", "api_cookie_renew", "close_notice", "red_flower", "db_backup", "delivery_timeout", "listing_monitor", "seller_fill", "dm_send", "auto_order", "image_cleanup", "lead_comment_scan"]:
             return {
                 "success": False,
                 "code": 400,
@@ -210,6 +210,29 @@ async def run_listing_monitor_single(task_id: int):
             "success": False,
             "code": 500,
             "message": f"手动执行商品监控任务失败: {str(e)}",
+            "data": None,
+        }
+
+
+@router.post("/tasks/lead_comment_scan/run/{task_id}")
+async def run_lead_comment_scan_single(task_id: int):
+    """手动执行单个线索采集任务的扫描（忽略间隔，立即执行一次，日志记为手动触发）"""
+    from app.services.scheduler.lead_comment_scan_task import lead_comment_scan_task_service
+
+    try:
+        result = await lead_comment_scan_task_service.run_single(task_id, trigger_type="manual")
+        return {
+            "success": bool(result.get("success")),
+            "code": 200 if result.get("success") else 400,
+            "message": result.get("message") or "",
+            "data": {"task_id": task_id, "triggered_at": get_beijing_now_naive().isoformat()},
+        }
+    except Exception as e:
+        logger.error(f"[内部API] 手动执行线索采集任务失败: {e}")
+        return {
+            "success": False,
+            "code": 500,
+            "message": f"手动执行线索采集任务失败: {str(e)}",
             "data": None,
         }
 

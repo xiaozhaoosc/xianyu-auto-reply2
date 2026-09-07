@@ -41,6 +41,7 @@ from app.services.scheduler.dm_send_task import dm_send_task_service
 from app.services.scheduler.auto_order_task import auto_order_task_service
 from app.services.scheduler.image_cleanup_task import image_cleanup_task_service
 from app.services.scheduler.migration_publish_task import MigrationPublishTask
+from app.services.scheduler.lead_comment_scan_task import lead_comment_scan_task_service
 from app.services.scheduled_task_service import (
     ScheduledTaskService,
     TASK_CODE_REDELIVERY,
@@ -67,6 +68,7 @@ from app.services.scheduled_task_service import (
     TASK_CODE_AUTO_ORDER,
     TASK_CODE_IMAGE_CLEANUP,
     TASK_CODE_MIGRATION_PUBLISH,
+    TASK_CODE_LEAD_COMMENT_SCAN,
 )
 from common.db.session import async_session_maker
 
@@ -102,6 +104,7 @@ class SchedulerService:
         self._auto_order_task_handle: Optional[asyncio.Task] = None
         self._image_cleanup_task_handle: Optional[asyncio.Task] = None
         self._migration_publish_task_handle: Optional[asyncio.Task] = None
+        self._lead_comment_scan_task_handle: Optional[asyncio.Task] = None
         self._redelivery_task = RedeliveryTask()
         self._rate_task = RateTask()
         self._polish_task = polish_task_service
@@ -126,6 +129,7 @@ class SchedulerService:
         self._auto_order_task = auto_order_task_service
         self._image_cleanup_task = image_cleanup_task_service
         self._migration_publish_task = MigrationPublishTask()
+        self._lead_comment_scan_task = lead_comment_scan_task_service
     
     @classmethod
     def get_instance(cls) -> "SchedulerService":
@@ -192,6 +196,7 @@ class SchedulerService:
         self._auto_order_task_handle = asyncio.create_task(self._run_auto_order_loop())
         self._image_cleanup_task_handle = asyncio.create_task(self._run_image_cleanup_loop())
         self._migration_publish_task_handle = asyncio.create_task(self._run_migration_publish_loop())
+        self._lead_comment_scan_task_handle = asyncio.create_task(self._run_lead_comment_scan_loop())
         logger.info("[定时任务调度] 已启动")
     
     def stop(self) -> None:
@@ -273,6 +278,9 @@ class SchedulerService:
         if self._migration_publish_task_handle:
             self._migration_publish_task_handle.cancel()
             self._migration_publish_task_handle = None
+        if self._lead_comment_scan_task_handle:
+            self._lead_comment_scan_task_handle.cancel()
+            self._lead_comment_scan_task_handle = None
         logger.info("[定时任务调度] 已停止")
     
     def get_task_status(self) -> dict:
@@ -544,6 +552,9 @@ class SchedulerService:
         elif task_code == TASK_CODE_IMAGE_CLEANUP:
             logger.info("[定时任务调度] 手动触发图片清理任务")
             await self._image_cleanup_task.execute()
+        elif task_code == TASK_CODE_LEAD_COMMENT_SCAN:
+            logger.info("[定时任务调度] 手动触发线索评论扫描任务")
+            await self._lead_comment_scan_task.execute(force=True, trigger_type="manual")
         else:
             logger.warning(f"[定时任务调度] 未知的任务代码: {task_code}")
     
@@ -1337,6 +1348,39 @@ class SchedulerService:
                 break
 
         logger.info("[定时任务调度] 商品迁移发布任务循环结束")
+
+    async def _run_lead_comment_scan_loop(self) -> None:
+        """线索评论扫描任务执行循环（外层轮询到期检查，单任务有自身 interval_minutes 最低30分钟）"""
+        logger.info("[定时任务调度] 线索评论扫描任务循环开始")
+
+        # 初始加载配置
+        await self.reload_task_config(TASK_CODE_LEAD_COMMENT_SCAN)
+
+        while self._running:
+            config = ScheduledTaskService.get_cached_config(TASK_CODE_LEAD_COMMENT_SCAN)
+            if not config:
+                config = {"interval_seconds": 300, "enabled": True}
+
+            interval = config.get("interval_seconds", 300)
+            enabled = config.get("enabled", True)
+
+            if enabled:
+                try:
+                    await self._lead_comment_scan_task.execute()
+                except asyncio.CancelledError:
+                    logger.info("[定时任务调度] 线索评论扫描任务被取消")
+                    break
+                except Exception as e:
+                    logger.error(f"[定时任务调度] 线索评论扫描任务执行异常: {e}")
+
+            # 等待下一次执行
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logger.info("[定时任务调度] 线索评论扫描任务等待被取消")
+                break
+
+        logger.info("[定时任务调度] 线索评论扫描任务循环结束")
 
 
 # 全局实例获取函数

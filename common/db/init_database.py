@@ -503,6 +503,13 @@ class DatabaseInitializer:
             True,
             "定时扫描卡券与素材库专属图片目录，删除已删除对象遗留的孤儿图片（仅清理各自目录，不影响其它功能图片）",
         ),
+        (
+            "lead_comment_scan",
+            "线索评论扫描任务",
+            300,
+            True,
+            "定时扫描线索采集任务的候选商品评论区（只读），高意向评论入库形成线索池；单任务间隔最低30分钟，全局详情请求日上限50次，触发风控立即终止",
+        ),
     )
     
     # ========== 所有数据表的DDL定义 ==========
@@ -633,6 +640,8 @@ class DatabaseInitializer:
                 price VARCHAR(32) COMMENT '商品价格',
                 ai_prompt TEXT COMMENT '商品AI提示词',
                 is_polished TINYINT(1) DEFAULT 0 COMMENT '是否擦亮',
+                live_status VARCHAR(16) NOT NULL DEFAULT 'on_sale' COMMENT '平台在售状态：on_sale-在售/off_shelf-已下架/sold_out-已卖出/deleted-已删除',
+                off_shelf_at DATETIME DEFAULT NULL COMMENT '确认不在售时间',
                 metadata JSON COMMENT '商品元数据',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -1942,6 +1951,130 @@ class DatabaseInitializer:
                 INDEX idx_chat_quick_phrase_owner_sort (owner_id, sort_order)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='在线聊天快捷短语';
         """,
+
+        # 52. 线索采集任务配置表（只读监控别人商品评论区的高意向需求，无自动触达能力）
+        "xy_lead_capture_tasks": """
+            CREATE TABLE IF NOT EXISTS xy_lead_capture_tasks (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                name VARCHAR(100) NOT NULL COMMENT '任务名称',
+                source_type VARCHAR(20) NOT NULL DEFAULT 'monitor' COMMENT '候选来源：monitor-复用商品监控采集池，keyword-独立关键词搜索',
+                keyword VARCHAR(200) DEFAULT NULL COMMENT 'source_type=keyword 时的搜索词',
+                monitor_task_id BIGINT DEFAULT NULL COMMENT 'source_type=monitor 时关联的 xy_listing_monitor_tasks.id',
+                price_min DECIMAL(12,2) DEFAULT NULL COMMENT '候选商品价格区间最低值',
+                price_max DECIMAL(12,2) DEFAULT NULL COMMENT '候选商品价格区间最高值',
+                interval_minutes INT NOT NULL DEFAULT 60 COMMENT '扫描间隔分钟（最低30）',
+                max_items_per_round INT NOT NULL DEFAULT 5 COMMENT '每轮扫描商品数上限（最高10）',
+                comment_pages_per_item INT NOT NULL DEFAULT 1 COMMENT '每商品每次读取评论页数（固定1）',
+                include_weak TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否入库弱意向评论',
+                account_ids JSON DEFAULT NULL COMMENT '读取用账号ID列表（只读借用Cookie）',
+                rescan_cooldown_hours INT NOT NULL DEFAULT 24 COMMENT '同一商品两次评论扫描最小间隔小时',
+                is_enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用任务',
+                is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除（软删除）',
+                last_run_at DATETIME DEFAULT NULL COMMENT '最近一次执行时间',
+                remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_lct_owner_id (owner_id),
+                INDEX idx_lct_owner_enabled (owner_id, is_enabled),
+                INDEX idx_lct_owner_deleted (owner_id, is_deleted)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索采集任务配置表';
+        """,
+
+        # 53. 线索商品池表
+        "xy_lead_items": """
+            CREATE TABLE IF NOT EXISTS xy_lead_items (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                item_id VARCHAR(64) NOT NULL COMMENT '闲鱼商品ID',
+                title VARCHAR(500) DEFAULT NULL COMMENT '商品标题',
+                price VARCHAR(32) DEFAULT NULL COMMENT '商品价格（展示文本）',
+                seller_nick VARCHAR(120) DEFAULT NULL COMMENT '卖家昵称',
+                seller_user_id VARCHAR(64) DEFAULT NULL COMMENT '卖家真实用户ID',
+                item_url VARCHAR(1000) DEFAULT NULL COMMENT '商品详情页URL',
+                pic_url VARCHAR(1000) DEFAULT NULL COMMENT '商品主图URL',
+                want_count VARCHAR(32) DEFAULT NULL COMMENT '想要数（展示文本）',
+                comment_count INT NOT NULL DEFAULT 0 COMMENT '已采集评论数',
+                strong_count INT NOT NULL DEFAULT 0 COMMENT '强意向评论数',
+                medium_count INT NOT NULL DEFAULT 0 COMMENT '中意向评论数',
+                demand_score INT NOT NULL DEFAULT 0 COMMENT '需求热度分=strong*3+medium',
+                first_seen_at DATETIME DEFAULT NULL COMMENT '首次发现时间',
+                last_seen_at DATETIME DEFAULT NULL COMMENT '最近一次扫描到时间',
+                last_comment_scan_at DATETIME DEFAULT NULL COMMENT '最近一次评论扫描时间',
+                status VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT '商品状态：active-观察中，archived-已归档',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uk_li_owner_item (owner_id, item_id),
+                INDEX idx_li_owner_id (owner_id),
+                INDEX idx_li_status_heat (owner_id, status, strong_count),
+                INDEX idx_li_last_scan (owner_id, last_comment_scan_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索商品池表';
+        """,
+
+        # 54. 线索评论表（核心表）
+        "xy_lead_comments": """
+            CREATE TABLE IF NOT EXISTS xy_lead_comments (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                lead_item_id BIGINT NOT NULL COMMENT '关联 xy_lead_items.id',
+                comment_id VARCHAR(64) DEFAULT NULL COMMENT '平台评论ID',
+                commenter_name VARCHAR(120) DEFAULT NULL COMMENT '评论人昵称',
+                commenter_user_id VARCHAR(64) DEFAULT NULL COMMENT '评论人用户ID',
+                content VARCHAR(1000) NOT NULL COMMENT '评论内容',
+                comment_time DATETIME DEFAULT NULL COMMENT '评论发布时间',
+                intent_level VARCHAR(10) NOT NULL DEFAULT 'weak' COMMENT '意向层级：strong/medium/weak',
+                intent_keywords JSON DEFAULT NULL COMMENT '命中的关键词列表',
+                dedupe_hash VARCHAR(64) NOT NULL COMMENT '去重哈希',
+                status VARCHAR(20) NOT NULL DEFAULT 'new' COMMENT '处理状态：new/reviewed/ignored/followed',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uk_lc_dedupe (owner_id, dedupe_hash),
+                INDEX idx_lc_item_intent (lead_item_id, intent_level, status),
+                INDEX idx_lc_owner_status (owner_id, status),
+                INDEX idx_lc_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索评论表';
+        """,
+
+        # 55. 线索人工动作流水表
+        "xy_lead_actions": """
+            CREATE TABLE IF NOT EXISTS xy_lead_actions (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                lead_comment_id BIGINT NOT NULL COMMENT '关联 xy_lead_comments.id',
+                action_type VARCHAR(20) NOT NULL COMMENT '动作类型：opened/copied/ignored/followed',
+                suggested_reply VARCHAR(1000) DEFAULT NULL COMMENT '当时展示/复制的建议话术',
+                operator VARCHAR(64) DEFAULT NULL COMMENT '操作人用户名',
+                note VARCHAR(500) DEFAULT NULL COMMENT '备注',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_la_comment (lead_comment_id),
+                INDEX idx_la_owner (owner_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索人工动作流水表';
+        """,
+
+        # 56. 线索扫描执行日志表
+        "xy_lead_scan_logs": """
+            CREATE TABLE IF NOT EXISTS xy_lead_scan_logs (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                task_id BIGINT NOT NULL COMMENT '关联的线索采集任务ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                task_name VARCHAR(100) DEFAULT NULL COMMENT '任务名称',
+                trigger_type VARCHAR(10) NOT NULL DEFAULT 'auto' COMMENT '触发方式：auto/manual',
+                account_id VARCHAR(80) DEFAULT NULL COMMENT '本次使用的读取账号ID',
+                scanned_count INT NOT NULL DEFAULT 0 COMMENT '本次扫描的商品数',
+                comment_fetched INT NOT NULL DEFAULT 0 COMMENT '本次获取的评论数',
+                comment_new INT NOT NULL DEFAULT 0 COMMENT '本次新增入库的评论数',
+                strong_new INT NOT NULL DEFAULT 0 COMMENT '本次新增的强意向评论数',
+                risk_triggered TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否触发风控',
+                status VARCHAR(20) NOT NULL DEFAULT 'success' COMMENT '执行状态：success/failed/partial/risk_stopped',
+                message VARCHAR(1000) DEFAULT NULL COMMENT '执行结果说明',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_lsl_task (task_id),
+                INDEX idx_lsl_owner (owner_id),
+                INDEX idx_lsl_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索扫描执行日志表';
+        """,
     }
     
     # 字段迁移定义：表名 -> [(字段名, 字段定义, 在哪个字段后面)]
@@ -2119,6 +2252,12 @@ class DatabaseInitializer:
             ("ai_prompt", "TEXT COMMENT '商品AI提示词'", "price"),
             ("is_polished", "TINYINT(1) DEFAULT 0 COMMENT '是否擦亮'", "ai_prompt"),
             ("updated_at", "DATETIME COMMENT '更新时间'", "created_at"),
+            (
+                "live_status",
+                "VARCHAR(16) NOT NULL DEFAULT 'on_sale' COMMENT '平台在售状态：on_sale-在售/off_shelf-已下架/sold_out-已卖出/deleted-已删除'",
+                "is_polished",
+            ),
+            ("off_shelf_at", "DATETIME DEFAULT NULL COMMENT '确认不在售时间'", "live_status"),
         ],
         "xy_announcements": [
             ("is_deleted", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除'", "content"),
