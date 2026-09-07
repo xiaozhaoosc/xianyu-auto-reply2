@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { CheckSquare, Download, Edit2, ExternalLink, Loader2, Package, PackageX, RefreshCw, Search, Square, Trash2, X, Settings, Plus, MessageSquare, Bot, ChevronLeft, ChevronRight, ImagePlus, Unlink, Tag } from 'lucide-react'
 import { batchDeleteItems, batchDeleteXianyuItems, batchOfflineItems, deleteItem, fetchAllItemsFromAccessibleAccounts, fetchAllItemsFromAccount, getItemsPaginated, updateItem, updateItemMultiQuantityDelivery, updateItemMultiSpec, updateItemPrice, getItemDefaultReply, saveItemDefaultReply, deleteItemDefaultReply, batchSaveItemDefaultReply, batchDeleteItemDefaultReply, getItemAiPrompt, saveItemAiPrompt, batchDeleteItemAiPrompt, batchSaveItemAiPrompt, uploadItemDefaultReplyImage, uploadBatchDefaultReplyImage, type ItemFilterParams } from '@/api/items'
 import { getAccountDetails } from '@/api/accounts'
@@ -13,6 +13,14 @@ import { ConfirmModal } from '@/components/common/ConfirmModal'
 import type { Account, Item } from '@/types'
 
 type ItemBooleanFilterKey = 'is_polished' | 'is_multi_spec' | 'multi_quantity_delivery'
+
+// 平台在售状态展示配置（与后端 live_status 枚举对齐）
+const LIVE_STATUS_META: Record<string, { label: string; className: string }> = {
+  on_sale: { label: '在售', className: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
+  off_shelf: { label: '已下架', className: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' },
+  sold_out: { label: '已卖出', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
+  deleted: { label: '已删除', className: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400' },
+}
 
 
 export function Items() {
@@ -40,6 +48,7 @@ export function Items() {
     is_polished: null,
     is_multi_spec: null,
     multi_quantity_delivery: null,
+    live_status: null,
   })
 
   // 编辑弹窗状态
@@ -188,13 +197,21 @@ export function Items() {
     setFilters(newFilters)
     loadItems(1, pagination.pageSize, newFilters)
   }
-  
+
+  // 平台在售状态筛选变更
+  const handleLiveStatusFilterChange = (value: string | null) => {
+    const newFilters = { ...filters, live_status: value }
+    setFilters(newFilters)
+    loadItems(1, pagination.pageSize, newFilters)
+  }
+
   // 重置筛选条件
   const handleResetFilters = () => {
     const emptyFilters: ItemFilterParams = {
       is_polished: null,
       is_multi_spec: null,
       multi_quantity_delivery: null,
+      live_status: null,
     }
     setFilters(emptyFilters)
     skipNextSearchEffectRef.current = !!searchKeyword.trim()
@@ -1353,6 +1370,20 @@ export function Items() {
               </div>
             </div>
             <div className="input-group min-w-[140px]">
+              <label className="input-label">平台状态</label>
+              <select
+                value={filters.live_status || ''}
+                onChange={(e) => handleLiveStatusFilterChange(e.target.value || null)}
+                className="input-ios"
+              >
+                <option value="">全部</option>
+                <option value="on_sale">在售</option>
+                <option value="sold_out">已卖出</option>
+                <option value="off_shelf">已下架</option>
+                <option value="deleted">已删除</option>
+              </select>
+            </div>
+            <div className="input-group min-w-[140px]">
               <label className="input-label">是否擦亮</label>
               <select
                 value={filters.is_polished === null ? '' : String(filters.is_polished)}
@@ -1444,7 +1475,7 @@ export function Items() {
                   <th className="min-w-[260px]">商品标题</th>
                   <th className="min-w-[80px]">价格</th>
                   <th className="min-w-[80px] text-center">库存</th>
-                  <th className="min-w-[100px] text-center">状态</th>
+                  <th className="min-w-[100px] text-center">平台状态</th>
                   <th className="min-w-[170px]">上架时间</th>
                   <th className="min-w-[100px] text-center">是否擦亮</th>
                   <th className="min-w-[120px] text-center">规格数</th>
@@ -1516,8 +1547,18 @@ export function Items() {
                         ? item.item_quantity
                         : '-'}
                     </td>
-                    <td className="text-center text-gray-600 dark:text-gray-300">
-                      {item.item_status_desc || '-'}
+                    <td className="text-center">
+                      {(() => {
+                        const meta = LIVE_STATUS_META[item.live_status || 'on_sale'] || LIVE_STATUS_META.on_sale
+                        return (
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-medium ${meta.className}`}
+                            title={item.off_shelf_at ? `确认时间: ${item.off_shelf_at}` : undefined}
+                          >
+                            {meta.label}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="text-gray-500 text-xs">
                       {item.item_shelf_time || '-'}

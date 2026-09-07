@@ -1,4 +1,4 @@
-﻿"""
+"""
 商品服务
 
 功能：
@@ -30,6 +30,20 @@ from common.models.card import Card
 
 class ItemService:
     """Read/write operations for catalog items."""
+
+    # 平台在售状态枚举
+    LIVE_STATUS_ON_SALE = "on_sale"
+    LIVE_STATUS_OFF_SHELF = "off_shelf"
+    LIVE_STATUS_SOLD_OUT = "sold_out"
+    LIVE_STATUS_DELETED = "deleted"
+
+    # 下架探测限流：单轮每账号最多探测的商品数与请求间隔（防风控）
+    OFF_SHELF_PROBE_BATCH_LIMIT = 5
+    OFF_SHELF_PROBE_INTERVAL_SECONDS = 2.0
+    # 详情接口错误命中以下特征时判定商品已删除（其余商品级失败归为已下架）
+    _DELETED_ERROR_PATTERNS = ("not_exist", "not exist", "不存在", "已删除")
+    # 详情返回中命中以下字段（非空/非0）时判定商品已卖出
+    _SOLD_DETAIL_KEYS = ("soldPrice", "sold_price", "soldTime", "sold_time")
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -203,9 +217,10 @@ class ItemService:
         is_polished: bool | None = None,
         is_multi_spec: bool | None = None,
         multi_quantity_delivery: bool | None = None,
+        live_status: str | None = None,
     ) -> tuple[list[dict], int]:
         """获取商品列表（分页），支持多条件筛选
-        
+
         Args:
             owner_id: 用户ID，None表示查询所有用户（管理员）
             account_id: 账号ID（可选）
@@ -215,22 +230,25 @@ class ItemService:
             is_polished: 是否擦亮筛选
             is_multi_spec: 多规格筛选
             multi_quantity_delivery: 多数量发货筛选
-            
+            live_status: 平台在售状态筛选（on_sale/off_shelf/sold_out/deleted）
+
         Returns:
             (商品列表, 总数)
         """
         from sqlalchemy import String, and_, cast, func, or_
-        
+
         base_stmt = (
             select(XYCatalogItem, XYAccount.account_id)
             .outerjoin(XYAccount, XYCatalogItem.account_pk == XYAccount.id)
         )
-        
+
         conditions = []
         if owner_id is not None:
             conditions.append(XYCatalogItem.owner_id == owner_id)
         if account_id:
             conditions.append(XYAccount.account_id == account_id)
+        if live_status:
+            conditions.append(XYCatalogItem.live_status == live_status)
         if keyword and keyword.strip():
             keyword_like = f"%{keyword.strip()}%"
             conditions.append(
@@ -352,6 +370,7 @@ class ItemService:
         max_pages: int | None = None,
         stop_when_page_all_existing: bool = False,
         required_title_keyword: str | None = None,
+        detect_off_shelf: bool = False,
     ) -> dict[str, Any]:
         """抓取指定账号全部商品并入库（账号级加锁入口）
 
@@ -359,6 +378,12 @@ class ItemService:
         拉取 + 落库，避免「定时获取闲鱼商品任务」与「商品管理页手动触发同步」
         并发 upsert 同一商品。Redis 不可用时降级为无锁执行，由 xy_catalog_items
         的 (account_id, item_id) 唯一约束 + 保存时的冲突重试做最终兜底。
+
+        Args:
+            detect_off_shelf: 开启下架检测：强制完整遍历在售列表（忽略整页已
+                存在的提前停止优化），同步完成后 diff 标记本地在售但平台已
+                不存在的商品为已下架，并对已下架商品做详情探测细分
+                （已删除/已卖出/已下架）。
         """
         lock_name = f"item_sync:{account.account_id}"
         try:
@@ -386,6 +411,7 @@ class ItemService:
                     max_pages=max_pages,
                     stop_when_page_all_existing=stop_when_page_all_existing,
                     required_title_keyword=required_title_keyword,
+                    detect_off_shelf=detect_off_shelf,
                 )
         except Exception as exc:
             # Redis 不可用等异常时降级为无锁执行，靠唯一约束兜底防止重复入库
@@ -399,6 +425,7 @@ class ItemService:
                 max_pages=max_pages,
                 stop_when_page_all_existing=stop_when_page_all_existing,
                 required_title_keyword=required_title_keyword,
+                detect_off_shelf=detect_off_shelf,
             )
 
     async def _fetch_all_items_from_account_impl(
@@ -408,16 +435,22 @@ class ItemService:
         max_pages: int | None = None,
         stop_when_page_all_existing: bool = False,
         required_title_keyword: str | None = None,
+        detect_off_shelf: bool = False,
     ) -> dict[str, Any]:
         """抓取指定账号全部商品并入库（实际实现，调用方需已持有账号锁）"""
         myid = self._resolve_account_fetch_user_id(account)
         normalized_required_title_keyword = str(required_title_keyword or "").strip()
+        # 下架检测依赖完整在售列表，开启时强制完整遍历（禁用整页已存在的提前停止优化）
+        effective_stop_when_page_all_existing = stop_when_page_all_existing and not detect_off_shelf
 
         manager = await self._resolve_item_fetch_manager(account)
         fetched_items: list[dict] = []
         total_saved_count = 0
         fetched_pages = 0
         matched_required_title_keyword = False
+        # 本轮完整拉取到的在售商品ID集合（用于下架 diff）与遍历完整性标记
+        collected_item_ids: set[str] = set()
+        traversal_complete = False
         try:
             page_number = 1
             while True:
@@ -438,10 +471,12 @@ class ItemService:
                 items = result.get("items") or []
                 if not items:
                     logger.info(f"账号[{account.account_id}]商品同步第 {page_number} 页无数据，结束获取")
+                    traversal_complete = True
                     break
 
                 valid_items, skipped_count = self._collect_valid_item_entries(items)
                 unique_item_ids = list(dict.fromkeys(item_id for item_id, _ in valid_items))
+                collected_item_ids.update(unique_item_ids)
                 existing_map = await self._get_existing_item_map(account, unique_item_ids)
                 page_matches_required_title = (
                     bool(normalized_required_title_keyword)
@@ -479,7 +514,7 @@ class ItemService:
                 # 仅当本页全部商品已存在且无实际字段变更（如价格/标题变化）时才停止翻页；
                 # 若有商品被更新（如卖家在闲鱼改价），需继续翻页以免遗漏更早商品的变更。
                 if (
-                    stop_when_page_all_existing
+                    effective_stop_when_page_all_existing
                     and page_all_existing
                     and page_changed_count == 0
                     and (
@@ -492,6 +527,7 @@ class ItemService:
 
                 if len(items) < page_size:
                     logger.info(f"账号[{account.account_id}]商品同步第 {page_number} 页数量少于页大小，结束获取")
+                    traversal_complete = True
                     break
 
                 page_number += 1
@@ -501,6 +537,31 @@ class ItemService:
         finally:
             await manager.close()
 
+        # 下架检测：仅在完整遍历成功时 diff，避免提前停止/中途失败误标已下架
+        off_shelf_summary = {
+            "marked": 0,
+            "probe_deleted": 0,
+            "probe_sold_out": 0,
+            "probe_confirmed_off_shelf": 0,
+            "probe_failed": 0,
+        }
+        if detect_off_shelf:
+            if traversal_complete:
+                try:
+                    marked_ids = await self._mark_off_shelf_items(account, collected_item_ids)
+                    off_shelf_summary["marked"] = len(marked_ids)
+                    probe_stats = await self._probe_off_shelf_items(account)
+                    off_shelf_summary.update(probe_stats)
+                except Exception as exc:
+                    await self.session.rollback()
+                    logger.warning(
+                        f"账号[{account.account_id}]下架检测/探测执行失败（不影响本轮商品同步结果）: {exc}"
+                    )
+            else:
+                logger.info(
+                    f"账号[{account.account_id}]本轮未完整遍历在售列表（提前停止或达到页数限制），跳过下架检测"
+                )
+
         return {
             "success": True,
             "message": f"获取到 {len(fetched_items)} 个商品",
@@ -509,6 +570,7 @@ class ItemService:
             "total_pages": fetched_pages,
             "page_size": page_size,
             "saved_count": total_saved_count,
+            "off_shelf": off_shelf_summary,
         }
 
     async def fetch_all_items_from_accounts(
@@ -516,6 +578,7 @@ class ItemService:
         accounts: list[XYAccount],
         page_size: int = 20,
         max_pages: int | None = None,
+        detect_off_shelf: bool = False,
     ) -> dict[str, Any]:
         """按账号列表批量抓取全部商品并汇总结果"""
         if not accounts:
@@ -543,6 +606,7 @@ class ItemService:
                     account=account,
                     page_size=page_size,
                     max_pages=max_pages,
+                    detect_off_shelf=detect_off_shelf,
                 )
                 account_success = bool(result.get("success"))
                 account_total_count = int(result.get("total_count") or 0)
@@ -594,6 +658,194 @@ class ItemService:
             "failed_accounts": failed_accounts,
             "results": account_results,
         }
+
+    async def _mark_off_shelf_items(
+        self,
+        account: XYAccount,
+        fetched_item_ids: set[str],
+    ) -> list[str]:
+        """完整同步后 diff：本地仍在售但平台在售列表中不存在的商品标记为已下架。
+
+        仅处理 live_status=on_sale 的记录（off_shelf 待探测的保持原状等待探测，
+        deleted/sold_out 为终态不再变更）；商品重新上架的恢复由 _apply_single_item
+        在 upsert 时处理。接口返回空在售列表时（疑似风控/异常）跳过标记，防止误杀。
+
+        Args:
+            account: 已完成本轮完整同步的账号。
+            fetched_item_ids: 本轮完整遍历拉取到的在售商品ID集合。
+        Returns:
+            本轮新标记为已下架的商品ID列表。
+        """
+        stmt = select(XYCatalogItem).where(
+            XYCatalogItem.owner_id == account.owner_id,
+            XYCatalogItem.account_pk == account.id,
+            XYCatalogItem.live_status == self.LIVE_STATUS_ON_SALE,
+            # 本地占位/异常ID（auto_ 前缀）不会出现在平台列表中，不参与 diff
+            ~XYCatalogItem.item_id.startswith("auto_"),
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        if not rows:
+            return []
+
+        # 空列表保护：平台返回空在售列表且本地仍有在售商品时，疑似接口异常，跳过标记
+        if not fetched_item_ids:
+            logger.warning(
+                f"账号[{account.account_id}]本轮平台在售列表为空，本地仍有 {len(rows)} 个在售商品，"
+                f"跳过下架标记（疑似接口异常，请人工确认）"
+            )
+            return []
+
+        now = datetime.now(timezone.utc)
+        marked: list[str] = []
+        for row in rows:
+            if row.item_id in fetched_item_ids:
+                continue
+            row.live_status = self.LIVE_STATUS_OFF_SHELF
+            row.off_shelf_at = now
+            marked.append(row.item_id)
+
+        if marked:
+            await self.session.commit()
+            logger.info(
+                f"账号[{account.account_id}]下架检测：本地在售 {len(rows)} 件，"
+                f"平台在售 {len(fetched_item_ids)} 件，"
+                f"本轮新标记已下架 {len(marked)} 件：{marked[:20]}"
+                + ("..." if len(marked) > 20 else "")
+            )
+        return marked
+
+    async def _probe_off_shelf_items(
+        self,
+        account: XYAccount,
+        limit: int | None = None,
+    ) -> dict[str, int]:
+        """对已下架商品调用详情接口探测细分状态（已删除/已卖出/确认已下架）。
+
+        分类规则（尽力而为，探测临时失败保持 off_shelf 由后续轮次重试）：
+        - 详情商品级失败且错误含「不存在/已删除」特征 → deleted（终态）
+        - 详情正常且命中已卖出特征字段 → sold_out（终态）
+        - 详情正常但无已卖出特征 → off_shelf（确认下架未卖出，详情仍可访问）
+        - 账号不可用 → 停止本轮探测；网络异常等临时失败 → 计入 failed
+
+        风控：单轮最多探测 OFF_SHELF_PROBE_BATCH_LIMIT 个（按确认时间倒序，
+        优先探测最近标记的），请求间隔 OFF_SHELF_PROBE_INTERVAL_SECONDS 秒。
+
+        Returns:
+            dict: {probe_deleted, probe_sold_out, probe_confirmed_off_shelf, probe_failed}
+        """
+        from common.services.xianyu_detail_client import XianyuItemDetailClient
+
+        probe_limit = limit or self.OFF_SHELF_PROBE_BATCH_LIMIT
+        stmt = (
+            select(XYCatalogItem)
+            .where(
+                XYCatalogItem.owner_id == account.owner_id,
+                XYCatalogItem.account_pk == account.id,
+                XYCatalogItem.live_status == self.LIVE_STATUS_OFF_SHELF,
+            )
+            .order_by(XYCatalogItem.off_shelf_at.desc())
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        stats = {
+            "probe_deleted": 0,
+            "probe_sold_out": 0,
+            "probe_confirmed_off_shelf": 0,
+            "probe_failed": 0,
+        }
+        if not rows:
+            return stats
+
+        client = XianyuItemDetailClient(
+            account.account_id, account.cookie, owner_id=account.owner_id
+        )
+        status_changed = False
+        try:
+            for idx, row in enumerate(rows[:probe_limit]):
+                # 请求间隔（首个请求前不等待），避免请求密集触发风控
+                if idx > 0:
+                    await asyncio.sleep(self.OFF_SHELF_PROBE_INTERVAL_SECONDS)
+
+                try:
+                    result = await client.get_detail(row.item_id)
+                except Exception as exc:
+                    stats["probe_failed"] += 1
+                    logger.warning(
+                        f"账号[{account.account_id}]商品 {row.item_id} 下架探测请求异常: {exc}"
+                    )
+                    continue
+
+                # 账号不可用（Session过期/风控）：继续探测无意义且有风险，停止本轮
+                if result.get("account_invalid"):
+                    logger.warning(
+                        f"账号[{account.account_id}]下架探测时账号不可用，停止本轮探测: "
+                        f"{result.get('error')}"
+                    )
+                    break
+
+                if result.get("item_invalid"):
+                    # 商品级明确失败：错误含不存在/已删除特征判已删除，其余（下架/跨境等）确认已下架
+                    error_text = str(result.get("error") or "").lower()
+                    if any(p in error_text for p in self._DELETED_ERROR_PATTERNS):
+                        row.live_status = self.LIVE_STATUS_DELETED
+                        status_changed = True
+                        stats["probe_deleted"] += 1
+                        logger.info(
+                            f"账号[{account.account_id}]商品 {row.item_id} 探测判定为已删除: "
+                            f"{result.get('error')}"
+                        )
+                    else:
+                        stats["probe_confirmed_off_shelf"] += 1
+                        logger.info(
+                            f"账号[{account.account_id}]商品 {row.item_id} 探测确认已下架: "
+                            f"{result.get('error')}"
+                        )
+                elif result.get("success"):
+                    detail = result.get("detail") or {}
+                    item_do = detail.get("itemDO") if isinstance(detail.get("itemDO"), dict) else {}
+                    sold_marker = self._find_sold_marker(detail, item_do)
+                    if sold_marker:
+                        row.live_status = self.LIVE_STATUS_SOLD_OUT
+                        status_changed = True
+                        stats["probe_sold_out"] += 1
+                        logger.info(
+                            f"账号[{account.account_id}]商品 {row.item_id} 探测判定为已卖出（{sold_marker}）"
+                        )
+                    else:
+                        stats["probe_confirmed_off_shelf"] += 1
+                        # 记录详情顶层字段便于后续人工确认已卖出特征字段名
+                        logger.debug(
+                            f"账号[{account.account_id}]商品 {row.item_id} 探测详情可访问但未命中已卖出特征，"
+                            f"itemDO keys={list(item_do.keys())}"
+                        )
+                else:
+                    # 网络异常/重试耗尽等临时失败，保持 off_shelf 下轮重试
+                    stats["probe_failed"] += 1
+                    logger.info(
+                        f"账号[{account.account_id}]商品 {row.item_id} 下架探测临时失败: "
+                        f"{result.get('error')}"
+                    )
+        finally:
+            if status_changed:
+                try:
+                    await self.session.commit()
+                except Exception as exc:
+                    await self.session.rollback()
+                    logger.warning(
+                        f"账号[{account.account_id}]下架探测状态落库失败（下轮探测会重新判定）: {exc}"
+                    )
+        return stats
+
+    @classmethod
+    def _find_sold_marker(cls, detail: dict, item_do: dict) -> str | None:
+        """在详情返回中查找已卖出特征字段，命中返回描述（如 'itemDO.soldPrice=99'）。"""
+        for source, label in ((item_do, "itemDO"), (detail, "detail")):
+            if not isinstance(source, dict):
+                continue
+            for key in cls._SOLD_DETAIL_KEYS:
+                value = source.get(key)
+                if value not in (None, "", 0, "0"):
+                    return f"{label}.{key}={value}"
+        return None
 
     async def save_fetched_items(
         self,
@@ -685,6 +937,14 @@ class ItemService:
             new_title = item.get("title", "")
             new_price = item.get("price_text", "")
             changed = False
+            # 商品重新出现在在售列表（重新上架）→ 恢复在售并清空下架时间
+            if existing_item.live_status != self.LIVE_STATUS_ON_SALE:
+                existing_item.live_status = self.LIVE_STATUS_ON_SALE
+                existing_item.off_shelf_at = None
+                changed = True
+                logger.info(
+                    f"账号[{account.account_id}]商品 {item_id} 重新出现在在售列表，恢复为在售"
+                )
             if existing_item.title != new_title:
                 existing_item.title = new_title
                 changed = True
@@ -727,6 +987,7 @@ class ItemService:
             title=item.get("title", ""),
             price=item.get("price_text", ""),
             is_polished=False,
+            live_status=self.LIVE_STATUS_ON_SALE,
             metadata_json=new_metadata,
             created_at=datetime.now(timezone.utc),
         )
@@ -1192,6 +1453,9 @@ class ItemService:
             "ai_prompt": item.ai_prompt or "",
             "has_ai_prompt": bool(item.ai_prompt),
             "is_polished": item.is_polished or False,
+            # 平台在售状态（同步 diff + 详情探测维护）：on_sale/off_shelf/sold_out/deleted
+            "live_status": item.live_status or self.LIVE_STATUS_ON_SALE,
+            "off_shelf_at": self._format_dt(item.off_shelf_at),
             "is_multi_spec": metadata.get("is_multi_spec", False),
             "multi_quantity_delivery": metadata.get("multi_quantity_delivery", False),
             "default_reply_enabled": default_reply_info.get("enabled", False) if default_reply_info else False,

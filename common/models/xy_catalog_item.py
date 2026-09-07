@@ -1,4 +1,4 @@
-﻿"""
+"""
 商品目录模型
 
 功能：
@@ -41,6 +41,14 @@ class XYCatalogItem(Base):
     price: Mapped[str | None] = mapped_column(String(32), comment="商品价格")
     ai_prompt: Mapped[str | None] = mapped_column(Text, comment="商品AI提示词")
     is_polished: Mapped[bool | None] = mapped_column("is_polished", default=False, comment="是否擦亮")
+    # 平台在售状态快照：on_sale-在售 / off_shelf-已下架 / sold_out-已卖出 / deleted-已删除
+    # 由完整同步 diff 标记 + 详情探测细分，商品重新上架时自动恢复 on_sale
+    live_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="on_sale", server_default="on_sale", comment="平台在售状态"
+    )
+    off_shelf_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="确认不在售时间"
+    )
     metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, comment="商品元数据")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), comment="创建时间")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), onupdate=datetime.now, comment="更新时间")

@@ -97,9 +97,19 @@ class FetchItemsTaskService:
                         total_fetched += fetched
                         total_saved += saved
                         success_count += 1
+                        off_shelf = result.get("off_shelf") or {}
+                        off_shelf_log = ""
+                        if off_shelf:
+                            off_shelf_log = (
+                                f", 下架检测: 新标记{off_shelf.get('marked', 0)}件, "
+                                f"探测已删除{off_shelf.get('probe_deleted', 0)}/"
+                                f"已卖出{off_shelf.get('probe_sold_out', 0)}/"
+                                f"确认下架{off_shelf.get('probe_confirmed_off_shelf', 0)}/"
+                                f"失败{off_shelf.get('probe_failed', 0)}"
+                            )
                         logger.info(
                             f"【{self.task_name}】账号 {account.account_id} "
-                            f"获取完成: 共{fetched}件, 保存{saved}件"
+                            f"获取完成: 共{fetched}件, 保存{saved}件{off_shelf_log}"
                         )
                 except Exception as e:
                     failed_count += 1
@@ -137,11 +147,11 @@ class FetchItemsTaskService:
     async def _fetch_items_for_account(self, account) -> dict:
         """获取单个账号的全部商品并入库（复用 ItemService 的加锁入口）
 
-        增量同步策略：开启 stop_when_page_all_existing，当某一页商品在本地库中
-        全部已存在（且无跳过项）时停止继续翻页。由于闲鱼「在售」列表默认按上架
-        时间倒序（新品在前），首页全部已存在即说明无新上架商品，停止翻页是安全
-        的，不会漏抓新品；首次同步或有新品时仍会按需翻页直至拉全，从而在保证数据
-        完整的前提下大幅降低对闲鱼接口的请求量，规避风控风险。
+        下架检测策略：开启 detect_off_shelf，同步时完整遍历「在售」列表（不启用
+        整页已存在的提前停止优化），同步完成后 diff 标记本地在售但平台已不存在的
+        商品为已下架，并对已下架商品做详情探测细分（已删除/已卖出/已下架）。
+        下架检测仅在完整遍历成功的轮次执行，接口异常返回空列表时自动跳过标记，
+        不会误杀存量商品。
         """
         async with async_session_maker() as session:
             item_svc = ItemService(session)
@@ -149,7 +159,7 @@ class FetchItemsTaskService:
                 account=account,
                 page_size=self.page_size,
                 max_pages=self.max_pages,
-                stop_when_page_all_existing=True,
+                detect_off_shelf=True,
             )
 
 

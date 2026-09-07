@@ -109,18 +109,20 @@ async def list_items_paginated(
     is_polished: bool | None = Query(default=None, description="是否擦亮筛选"),
     is_multi_spec: bool | None = Query(default=None, description="多规格筛选"),
     multi_quantity_delivery: bool | None = Query(default=None, description="多数量发货筛选"),
+    live_status: str | None = Query(default=None, description="平台在售状态筛选（on_sale/off_shelf/sold_out/deleted）"),
     current_user: User = Depends(deps.get_current_active_user),
     item_service: ItemService = Depends(deps.get_item_service),
 ):
     """获取商品列表（分页），支持多条件筛选
-    
+
     管理员可查看所有商品。
-    
+
     筛选条件：
     - keyword: 关键字（商品ID、标题、详情）
     - is_polished: 是否擦亮（true/false）
     - is_multi_spec: 多规格（true/false）
     - multi_quantity_delivery: 多数量发货（true/false）
+    - live_status: 平台在售状态（on_sale-在售/off_shelf-已下架/sold_out-已卖出/deleted-已删除）
     """
     owner_id, _ = resolve_owner_scope(current_user)
     items, total = await item_service.list_items_paginated(
@@ -132,6 +134,7 @@ async def list_items_paginated(
         is_polished=is_polished,
         is_multi_spec=is_multi_spec,
         multi_quantity_delivery=multi_quantity_delivery,
+        live_status=live_status,
     )
     
     return {
@@ -820,10 +823,10 @@ async def update_seller_item(
     if refreshed_cookies:
         account.cookie = refreshed_cookies
 
-    # 平台编辑成功后重新同步该账号商品，保证本地列表与平台一致
+    # 平台编辑成功后重新同步该账号商品，保证本地列表与平台一致（含下架检测）
     message = result.get("message") or "商品编辑成功"
     try:
-        sync_result = await item_service.fetch_all_items_from_account(account=account)
+        sync_result = await item_service.fetch_all_items_from_account(account=account, detect_off_shelf=True)
         if sync_result.get("success"):
             synced_total = sync_result.get("total_count", 0) or 0
             sync_message = str(sync_result.get("message") or "")
@@ -1234,6 +1237,7 @@ async def fetch_all_items_from_account(
             account=account,
             page_size=page_size,
             max_pages=max_pages,
+            detect_off_shelf=True,
         )
 
     accounts = await account_service.list_accounts(owner_id)
@@ -1241,6 +1245,7 @@ async def fetch_all_items_from_account(
         accounts=accounts,
         page_size=page_size,
         max_pages=max_pages,
+        detect_off_shelf=True,
     )
 
 # ==================== 商品搜索 ====================

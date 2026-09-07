@@ -130,6 +130,8 @@ export interface Item {
   item_quantity?: string | number   // 库存（鱼小铺）
   item_shelf_time?: string          // 上架时间（鱼小铺）
   item_status_desc?: string         // 商品状态文案（鱼小铺）
+  live_status?: string              // 平台在售状态：on_sale-在售/off_shelf-已下架/sold_out-已卖出/deleted-已删除
+  off_shelf_at?: string | null      // 确认不在售时间
   item_sku_list?: ItemSku[]         // 多规格明细（鱼小铺）
   item_sku_count?: number           // 规格数（鱼小铺）
   is_seller_item?: boolean          // 是否鱼小铺商品（仅鱼小铺可改价）
