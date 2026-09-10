@@ -45,6 +45,12 @@ RESUME_MAX_GAP_S = int(os.getenv("WS_SYNC_RESUME_MAX_GAP_S", "21600"))
 # 日志里出现 2~3 次），进程内靠 processed_message_ids 去重；包节奏约 1~3 小时
 # 一个，故宽窗口取 6h 才有实际覆盖，窄窗口保守取 1800s。
 RESUME_FIRST_GAP_S = int(os.getenv("WS_SYNC_RESUME_FIRST_GAP_S", "1800"))
+# 写侧防线（2026-09-10 实测补）：时间戳型 pts 距现在超过这个年龄就拒收——
+# 服务端保活包（bizType=370）携带的 pts 恒定是 2026-08-06 的旧值（历史残留），
+# 收下它只会把有效游标污染成"35 天前的检查点"。
+SYNC_PTS_MAX_AGE_S = int(os.getenv("WS_SYNC_PTS_MAX_AGE_S", "86400"))
+# 容忍的时钟超前量（服务端时钟略快时不至于拒收）
+CLOCK_SKEW_TOLERANCE_S = int(os.getenv("WS_SYNC_PTS_CLOCK_SKEW_S", "3600"))
 RESUME_ENABLED = os.getenv("WS_SYNC_RESUME_ENABLED", "1").strip().lower() not in (
     "0",
     "false",
@@ -367,12 +373,25 @@ def _key(account_id: str) -> str:
 
 
 async def save_checkpoint(
-    account_id: str, pts: int, seq: Optional[int] = None, raw_pts: Optional[int] = None
+    account_id: str,
+    pts: int,
+    seq: Optional[int] = None,
+    raw_pts: Optional[int] = None,
+    force: bool = False,
 ) -> bool:
     """持久化检查点（fail-open，异常返回 False）
 
     value 格式：``<pts_ms>,<seq>,<saved_ts>,<raw_pts>``
     —— pts_ms 用于时效校验/比较；raw_pts 是服务器原始量级，重连时原样上线。
+
+    两道写侧防线（2026-09-10 实测补）：
+    1. **拒收明显无效的 pts**：形如墙钟时间戳但与"现在"相差超过
+       ``SYNC_PTS_MAX_AGE_S``（默认 24h）的，视为无效——实测服务端保活包
+       （``bizType=370`` 的 syncPushPackage）携带的 pts 恒定是 2026-08-06 的旧值，
+       属于历史残留而非活游标。
+    2. **绝不回退**：写入前比对已有值，若已存的游标更新则跳过（否则保活包会把
+       真实消息包写入的新鲜游标后写覆盖打回旧值——这是"pts 为何总是 8/6"的真因）。
+    ``force=True`` 可绕过两道防线（仅供演练/取证）。
     """
     try:
         pts_ms = normalize_pts_ms(pts)
@@ -382,6 +401,31 @@ async def save_checkpoint(
 
         rc = await get_redis_client()
         raw = _as_positive_int(raw_pts) or _as_positive_int(pts) or pts_ms
+        if not force:
+            # 防线 1：时间戳型 pts 必须在合理时段内
+            if looks_like_timestamp_ms(pts_ms):
+                age_s = time.time() - pts_ms / 1000.0
+                if age_s > SYNC_PTS_MAX_AGE_S or age_s < -CLOCK_SKEW_TOLERANCE_S:
+                    logger.info(
+                        f"【{account_id}】[sync-pts] 忽略疑似无效 pts={pts_ms}"
+                        f"(原始{raw})：距现在 {round(age_s)}s，超出 "
+                        f"{SYNC_PTS_MAX_AGE_S}s 合理时段（多为保活包携带的历史残留）"
+                    )
+                    return False
+            # 防线 2：不回退
+            try:
+                current = await rc.get(_key(account_id))
+            except Exception:
+                current = None
+            if current:
+                parts = str(current).split(",")
+                prev_ms = normalize_pts_ms(parts[0]) if parts else None
+                if prev_ms and prev_ms >= pts_ms:
+                    logger.debug(
+                        f"【{account_id}】[sync-pts] 已有更新游标 "
+                        f"{prev_ms} >= {pts_ms}，跳过回退写入"
+                    )
+                    return False
         value = f"{pts_ms},{_as_positive_int(seq) or 0},{time.time():.3f},{raw}"
         await rc.set(_key(account_id), value, ex=SYNC_PTS_TTL_S)
         return True
