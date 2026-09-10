@@ -37,7 +37,14 @@ from loguru import logger
 SYNC_PTS_KEY_PREFIX = "ws:sync_pts:"
 SYNC_PTS_TTL_S = int(os.getenv("WS_SYNC_PTS_TTL_S", str(7 * 86400)))
 # 检查点超过这个间隔就认为"太久远"，放弃续传（避免服务端一次推巨量积压）
-RESUME_MAX_GAP_S = int(os.getenv("WS_SYNC_RESUME_MAX_GAP_S", "1800"))
+RESUME_MAX_GAP_S = int(os.getenv("WS_SYNC_RESUME_MAX_GAP_S", "21600"))
+# 进程启动后的「首次建连」用更窄的窗口：此时内存去重集合是空的，若让服务端
+# 补推较长历史，理论上存在重复回复买家的风险（风控红线）。等本进程已经收过帧
+# （去重集合非空），窗口才放宽到 RESUME_MAX_GAP_S。
+# 依据（2026-09-10 实测）：服务端本就会重复下发同一条消息（同一 message id 在
+# 日志里出现 2~3 次），进程内靠 processed_message_ids 去重；包节奏约 1~3 小时
+# 一个，故宽窗口取 6h 才有实际覆盖，窄窗口保守取 1800s。
+RESUME_FIRST_GAP_S = int(os.getenv("WS_SYNC_RESUME_FIRST_GAP_S", "1800"))
 RESUME_ENABLED = os.getenv("WS_SYNC_RESUME_ENABLED", "1").strip().lower() not in (
     "0",
     "false",
@@ -292,18 +299,25 @@ def log_frame_shape_once(account_id: str, message_data: Any) -> None:
         pass
 
 
-def decide_resume(checkpoint: Optional[Dict[str, Any]], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+def decide_resume(
+    checkpoint: Optional[Dict[str, Any]],
+    now: Optional[float] = None,
+    gap_limit_s: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
     """判断检查点能否用于续传（纯函数，便于单测）。
 
     Args:
         checkpoint: ``load_checkpoint`` 的返回值，形如
             ``{"pts":..., "seq":..., "saved_ts":...}``
+        gap_limit_s: 覆盖默认窗口。进程内重连传 ``RESUME_MAX_GAP_S``（宽），
+            进程启动后首次建连传 ``RESUME_FIRST_GAP_S``（窄，因内存去重集合为空）。
 
     Returns:
         可续传时返回 ``{"pts":..., "seq":..., "sync":..., "gap_s":...}``，否则 None
     """
     if not RESUME_ENABLED or RESUME_MODE == "off" or not checkpoint:
         return None
+    limit_s = RESUME_MAX_GAP_S if gap_limit_s is None else int(gap_limit_s)
     # 归一化放这里（而不是只在提取侧）：Redis 里可能存着历史版本写入的 µs 量级值，
     # 读取侧不归一化就会绕过下面的时效校验（2026-09-10 演练实测踩到）
     pts = normalize_pts_ms(checkpoint.get("pts"))
@@ -318,17 +332,17 @@ def decide_resume(checkpoint: Optional[Dict[str, Any]], now: Optional[float] = N
     gap_s = now - saved_ts
     if gap_s < 0:
         gap_s = 0.0
-    if gap_s > RESUME_MAX_GAP_S:
+    if gap_s > limit_s:
         return None
     # 时效校验（2026-09-10 演练实测补的防线）：
     # 若 pts 本身是墙钟时间戳(ms)，必须与"现在"同窗口——否则说明提取到的
     # 不是真正的同步 pts（例如某帧里的旧时间戳），续传会把游标推到错误位置。
     if looks_like_timestamp_ms(pts):
         drift_s = abs(now - pts / 1000.0)
-        if drift_s > RESUME_MAX_GAP_S:
+        if drift_s > limit_s:
             logger.warning(
                 f"[sync-pts] 检查点 pts={pts} 距现在 {round(drift_s)}s，"
-                f"超出窗口({RESUME_MAX_GAP_S}s)，判定为无效检查点，放弃续传"
+                f"超出窗口({limit_s}s)，判定为无效检查点，放弃续传"
             )
             return None
     seq = _as_positive_int(checkpoint.get("seq")) or 0
@@ -403,20 +417,29 @@ async def load_checkpoint(account_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def build_resume_state(account_id: str) -> Optional[Dict[str, Any]]:
-    """建连时调用：读取并校验检查点，返回可直接用于注册的续传参数"""
+async def build_resume_state(
+    account_id: str, gap_limit_s: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """建连时调用：读取并校验检查点，返回可直接用于注册的续传参数
+
+    Args:
+        gap_limit_s: 窗口覆盖。调用方按「本进程是否已收过帧」决定传
+            ``RESUME_MAX_GAP_S``（宽）还是 ``RESUME_FIRST_GAP_S``（窄）。
+    """
     try:
         checkpoint = await load_checkpoint(account_id)
-        state = decide_resume(checkpoint)
+        state = decide_resume(checkpoint, gap_limit_s=gap_limit_s)
+        limit_s = RESUME_MAX_GAP_S if gap_limit_s is None else int(gap_limit_s)
         if state:
             logger.info(
                 f"【{account_id}】[sync-pts] 断连 {state['gap_s']}s，"
-                f"重连续传检查点 pts={state['pts']} seq={state['seq']}"
+                f"重连续传检查点 pts={state['pts']} seq={state['seq']} "
+                f"sync={state['sync']} (窗口{limit_s}s)"
             )
         elif checkpoint:
             logger.info(
                 f"【{account_id}】[sync-pts] 检查点 pts={checkpoint.get('pts')} "
-                f"超出续传窗口({RESUME_MAX_GAP_S}s)，本次清零重来"
+                f"超出续传窗口({limit_s}s)，本次清零重来"
             )
         return state
     except Exception as e:

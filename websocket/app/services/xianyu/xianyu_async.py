@@ -603,11 +603,25 @@ class XianyuAsync:
         
         # 重连续传：读取上一连接持久化的同步检查点（收帧侧把 pts 写进 Redis）。
         # fail-open：读不到 / 超出续传窗口 / Redis 异常 → 维持原有"清零重来"，绝不阻断注册。
+        #
+        # 两档窗口（2026-09-10 定）：本进程已建过连（内存去重集合非空，重复帧会被
+        # processed_message_ids 拦住）→ 用宽窗口 RESUME_MAX_GAP_S，覆盖服务端约
+        # 1~3h 一个同步包的节奏；进程启动后的首次建连（去重集合为空）→ 用窄窗口
+        # RESUME_FIRST_GAP_S，避免服务端一次补推较长历史导致重复回复买家。
         resume_state = None
         try:
-            from app.services.xianyu.ws_sync_checkpoint import build_resume_state
+            from app.services.xianyu.ws_sync_checkpoint import (
+                RESUME_FIRST_GAP_S,
+                RESUME_MAX_GAP_S,
+                build_resume_state,
+            )
 
-            resume_state = await build_resume_state(self.cookie_id)
+            gap_limit_s = (
+                RESUME_MAX_GAP_S if self._connection_token else RESUME_FIRST_GAP_S
+            )
+            resume_state = await build_resume_state(
+                self.cookie_id, gap_limit_s=gap_limit_s
+            )
         except Exception as e:
             logger.debug(f"【{self.cookie_id}】[sync-pts] 读取续传检查点失败(清零重来): {e}")
 
