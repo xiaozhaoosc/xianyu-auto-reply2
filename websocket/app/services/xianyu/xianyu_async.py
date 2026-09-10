@@ -2330,35 +2330,79 @@ class XianyuAsync:
         return False
 
     async def _try_reuse_cached_cid(self, to_user_id: str) -> Optional[str]:
-        """创建会话失败时，尝试复用推送侧缓存的会话 cid。
+        """创建会话失败时，尝试复用已知的会话 cid。
 
-        backend-web chat_new 推送通道收到买家消息时，会把 (account_id, buyer_id) →
-        最近一次会话 cid 写入 Redis（key: chat:last_cid:<account_id>:<buyer_id>, 7天TTL）。
-        买家若已发过消息，会话必然存在，直接复用该 cid 即可，无需重新 create，
-        更不需要走「刷新token+断线重连」——那会把连接搞成僵尸。
+        回填优先级：
+        1. Redis 推送缓存（backend-web chat_new 收到买家消息时写入，
+           key: chat:last_cid:<account_id>:<buyer_id>, 7天TTL）——实时、最快
+        2. DB xy_ai_chat_messages 历史会话（同一买家最近一次的 chat_id）——
+           覆盖前端未开聊天页、Redis 无缓存的场景
+
+        买家若与卖家有过消息往来，会话必然存在，直接复用 cid 即可完成发送，
+        无需重新 create，更不需要走「刷新token+断线重连」——那会把连接搞成僵尸。
 
         Args:
             to_user_id: 对方用户ID（买家ID，不带 @goofish 后缀）
 
         Returns:
-            缓存的 cid（不带 @goofish 后缀）；无缓存或 Redis 异常返回 None（fail-open）
+            缓存的 cid（不带 @goofish 后缀）；无可用回填或异常返回 None（fail-open）
         """
+        # 1) Redis 推送缓存
         try:
             from common.db.redis_client import get_redis_client
             rc = await get_redis_client()
             key = f"chat:last_cid:{self.cookie_id}:{to_user_id}"
             raw = await rc.get(key)
-            if not raw:
-                return None
-            cid = str(raw)
-            # 去掉 @goofish 后缀，与 create_chat 返回口径一致
-            cid = cid.split("@")[0] if "@" in cid else cid
-            return cid or None
+            if raw:
+                cid = str(raw)
+                cid = cid.split("@")[0] if "@" in cid else cid
+                if cid:
+                    return cid
         except Exception as e:
             logger.debug(
                 f"【{self.cookie_id}】读取会话cid缓存失败(不影响主流程): {self._safe_str(e)}"
             )
-            return None
+
+        # 2) DB xy_ai_chat_messages 历史会话回填
+        try:
+            row = await self._query_last_chat_id(to_user_id)
+            if row:
+                cid = row.split("@")[0] if "@" in row else row
+                if cid:
+                    logger.info(
+                        f"【{self.cookie_id}】复用DB历史会话 cid={cid} "
+                        f"(to_user_id={to_user_id})"
+                    )
+                    return cid
+        except Exception as e:
+            logger.debug(
+                f"【{self.cookie_id}】查询DB历史会话失败(不影响主流程): {self._safe_str(e)}"
+            )
+
+        return None
+
+    async def _query_last_chat_id(self, to_user_id: str) -> Optional[str]:
+        """从 xy_ai_chat_messages 查询该账号与该买家最近一次的 chat_id。
+
+        用项目原生 SQLAlchemy async session 查询，异常一律 fail-open 返回 None。
+        """
+        from sqlalchemy import select
+        from common.db.session import async_session_maker
+        from common.models.ai_chat_message import AIChatMessage
+
+        async with async_session_maker() as db_session:
+            stmt = (
+                select(AIChatMessage.chat_id)
+                .where(
+                    AIChatMessage.cookie_id == self.cookie_id,
+                    AIChatMessage.user_id == str(to_user_id),
+                )
+                .order_by(AIChatMessage.id.desc())
+                .limit(1)
+            )
+            result = await db_session.execute(stmt)
+            row = result.first()
+            return row[0] if row else None
 
     @staticmethod
     def _extract_cid_from_create_chat_response(response: dict) -> Optional[str]:
