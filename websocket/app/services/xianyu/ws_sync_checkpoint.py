@@ -59,8 +59,56 @@ RESUME_PTS_SCALE = int(os.getenv("WS_SYNC_RESUME_PTS_SCALE", "1000")) or 1
 _PTS_FIELDS = ("pts", "highPts", "syncPts", "lastPts", "maxPts")
 _SEQ_FIELDS = ("seq", "lastSeq", "syncSeq")
 
-# 每个账号只打一次"帧结构观测"日志，避免刷屏
+# pts 量级归一化：服务器可能给 ms(1.7e12) 或 µs(1.7e15)，统一按 ms 存/算
+_MS_UPPER = 10 ** 13      # 超过此值视为 µs 量级
+_TS_LOWER = 1_500_000_000_000    # ~2047-07 之前的 ms 时间戳下限（排除小计数器）
+_TS_UPPER = 2_000_000_000_000    # ~2033-05 之后的 ms 视为异常
+
+# 每个账号每种帧只打一次"帧结构观测"
 _FRAME_SHAPE_LOGGED: set = set()
+# 每个账号每个命中源只打一次"命中取证"，用于确认 pts 真实字段
+_SOURCE_LOGGED: set = set()
+
+
+def normalize_pts_ms(value: Any) -> Optional[int]:
+    """把 pts 归一化到毫秒量级（µs 值 //1000），失败返回 None"""
+    raw = _as_positive_int(value)
+    if not raw:
+        return None
+    return raw // 1000 if raw >= _MS_UPPER else raw
+
+
+def looks_like_timestamp_ms(value: Any) -> bool:
+    """判断归一化后的 pts 是否像"墙钟时间戳(ms)"（用于时效校验）"""
+    v = _as_positive_int(value)
+    return bool(v) and _TS_LOWER <= v <= _TS_UPPER
+
+
+def _sanitize_headers(headers: Any) -> dict:
+    """帧 headers 脱敏（token/cookie 等绝不落日志）"""
+    if not isinstance(headers, dict):
+        return {}
+    drop = {"token", "cookie", "authorization", "cache-header"}
+    return {k: v for k, v in headers.items() if k.lower() not in drop}
+
+
+def describe_hit(message_data: Any) -> str:
+    """命中 pts 时的取证描述：脱敏 headers + 首条非密文字段"""
+    try:
+        if not isinstance(message_data, dict):
+            return ""
+        headers = _sanitize_headers(message_data.get("headers"))
+        plain = ""
+        body = message_data.get("body")
+        if isinstance(body, dict):
+            package = body.get("syncPushPackage")
+            if isinstance(package, dict) and isinstance(package.get("data"), list) and package["data"]:
+                first = package["data"][0]
+                if isinstance(first, dict):
+                    plain = str({k: v for k, v in first.items() if k != "data"})[:200]
+        return f"脱敏header={headers} 首条非密文字段={plain}"
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------- 纯函数
@@ -175,7 +223,15 @@ def extract_sync_checkpoint(message_data: Any) -> Optional[Dict[str, Any]]:
 
         if not best_pts:
             return None
-        return {"pts": int(best_pts), "seq": int(seq) if seq else None, "source": best_source}
+        pts_ms = normalize_pts_ms(best_pts)
+        if not pts_ms:
+            return None
+        return {
+            "pts": int(pts_ms),
+            "raw_pts": int(best_pts),
+            "seq": int(seq) if seq else None,
+            "source": best_source,
+        }
     except Exception as e:  # pragma: no cover - 兜底
         logger.debug(f"[sync-pts] 提取检查点异常(忽略): {e}")
         return None
@@ -262,6 +318,17 @@ def decide_resume(checkpoint: Optional[Dict[str, Any]], now: Optional[float] = N
         gap_s = 0.0
     if gap_s > RESUME_MAX_GAP_S:
         return None
+    # 时效校验（2026-09-10 演练实测补的防线）：
+    # 若 pts 本身是墙钟时间戳(ms)，必须与"现在"同窗口——否则说明提取到的
+    # 不是真正的同步 pts（例如某帧里的旧时间戳），续传会把游标推到错误位置。
+    if looks_like_timestamp_ms(pts):
+        drift_s = abs(now - pts / 1000.0)
+        if drift_s > RESUME_MAX_GAP_S:
+            logger.warning(
+                f"[sync-pts] 检查点 pts={pts} 距现在 {round(drift_s)}s，"
+                f"超出窗口({RESUME_MAX_GAP_S}s)，判定为无效检查点，放弃续传"
+            )
+            return None
     seq = _as_positive_int(checkpoint.get("seq")) or 0
     return {
         "pts": pts,
@@ -354,6 +421,15 @@ async def record_from_frame(account_id: str, message_data: Any) -> Optional[Dict
             log_frame_shape_once(account_id, message_data)
             return None
         saved = await save_checkpoint(account_id, got["pts"], got.get("seq"))
+        if saved:
+            marker = f"{account_id}|{got.get('source')}"
+            if marker not in _SOURCE_LOGGED:
+                _SOURCE_LOGGED.add(marker)
+                logger.info(
+                    f"【{account_id}】[sync-pts] 命中源={got.get('source')} "
+                    f"pts={got['pts']}(原始{got.get('raw_pts')}) seq={got.get('seq')} "
+                    f"{describe_hit(message_data)}"
+                )
         return got if saved else None
     except Exception as e:
         logger.debug(f"【{account_id}】[sync-pts] 收帧侧处理失败(忽略): {e}")
