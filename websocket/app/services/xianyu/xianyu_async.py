@@ -601,6 +601,21 @@ class XianyuAsync:
             logger.warning(f"【{self.cookie_id}】无法获取有效token")
             raise Exception("Token获取失败")
         
+        # 重连续传：读取上一连接持久化的同步检查点（收帧侧把 pts 写进 Redis）。
+        # fail-open：读不到 / 超出续传窗口 / Redis 异常 → 维持原有"清零重来"，绝不阻断注册。
+        resume_state = None
+        try:
+            from app.services.xianyu.ws_sync_checkpoint import build_resume_state
+
+            resume_state = await build_resume_state(self.cookie_id)
+        except Exception as e:
+            logger.debug(f"【{self.cookie_id}】[sync-pts] 读取续传检查点失败(清零重来): {e}")
+
+        resume_sync = None
+        if resume_state and resume_state.get("use_sync_header"):
+            resume_sync = resume_state.get("sync")
+        sync_header = resume_sync or "0,0;0;0;"
+
         # 发送注册消息
         msg = {
             "lwp": "/reg",
@@ -611,16 +626,26 @@ class XianyuAsync:
                 "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "dt": "j",
                 "wv": "im:3,au:3,sy:6",
-                "sync": "0,0;0;0;",
+                "sync": sync_header,
                 "did": self.device_id,
                 "mid": generate_mid()
             }
         }
         await ws.send(json.dumps(msg))
+        if resume_sync:
+            logger.info(
+                f"【{self.cookie_id}】[sync-pts] /reg 携带续传检查点 sync={resume_sync}"
+                f"（断连 {resume_state['gap_s']}s）"
+            )
         await asyncio.sleep(1)
         
         # 发送同步状态消息
+        # 续传：ackDiff 的 pts/highPts 用检查点（语义="我读到这儿，之后的推给我"）；
+        # 无检查点则维持原行为（highPts=0, pts=now*1000，等价于"我已消费到此刻"）
         current_time = int(time.time() * 1000)
+        resume_ack_pts = (resume_state or {}).get("ack_pts")
+        ack_pts = resume_ack_pts or current_time * 1000
+        ack_high_pts = resume_ack_pts or 0
         msg = {
             "lwp": "/r/SyncStatus/ackDiff",
             "headers": {"mid": generate_mid()},
@@ -630,14 +655,18 @@ class XianyuAsync:
                     "tooLong2Tag": "PNM,1",
                     "channel": "sync",
                     "topic": "sync",
-                    "highPts": 0,
-                    "pts": current_time * 1000,
-                    "seq": 0,
+                    "highPts": ack_high_pts,
+                    "pts": ack_pts,
+                    "seq": (resume_state or {}).get("seq") or 0,
                     "timestamp": current_time
                 }
             ]
         }
         await ws.send(json.dumps(msg))
+        if resume_ack_pts:
+            logger.info(
+                f"【{self.cookie_id}】[sync-pts] ackDiff 续传 pts={ack_pts} highPts={ack_high_pts}"
+            )
         logger.info(f'【{self.cookie_id}】连接注册完成')
     
     def _create_tracked_task(self, coro):

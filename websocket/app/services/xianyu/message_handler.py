@@ -493,6 +493,11 @@ class MessageHandler:
     async def handle_message(self, message_data: dict, websocket) -> bool:
         """处理消息"""
         try:
+            # 同步检查点持久化（pts 续传用）：从每一帧里提取同步 pts 落 Redis，
+            # 供重连时 /reg + ackDiff 续传，避免"失忆式重注册"丢失断连窗口消息。
+            # 纯旁路：提取不到或异常都静默，不阻断 ACK 与消息处理（fail-open）
+            await self._record_sync_checkpoint(message_data)
+
             # 发送ACK确认消息（参照旧框架，必须发送否则服务器会断开连接）
             await self._send_ack(message_data, websocket)
             
@@ -514,6 +519,17 @@ class MessageHandler:
             logger.error(f"【{self.cookie_id}】处理消息异常: {safe_str(e)}")
             return False
     
+    async def _record_sync_checkpoint(self, message_data: dict) -> None:
+        """把帧里的同步 pts 落 Redis（重连续传用，旁路能力，永不阻断主流程）"""
+        try:
+            from app.services.xianyu.ws_sync_checkpoint import record_from_frame
+
+            got = await record_from_frame(self.cookie_id, message_data)
+            if got:
+                self.last_sync_pts = got.get("pts")
+        except Exception:
+            pass
+
     async def _send_ack(self, message_data: dict, websocket) -> None:
         """发送ACK确认消息（参照旧框架实现）
         
