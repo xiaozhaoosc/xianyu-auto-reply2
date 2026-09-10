@@ -36,6 +36,12 @@ TOKEN_RETRY_INTERVAL = int(os.getenv('TOKEN_RETRY_INTERVAL', '7200'))
 # 自动发货被账号开关拦截时写入订单的说明，便于在订单管理中定位原因。
 AUTO_CONFIRM_DISABLED_REASON = "自动确认发货开关未开启，未执行自动发货，请手动发货"
 
+# 「创建会话失败 → 刷新token+强制重连」这一自愈路径的最小重连间隔（秒）。
+# 该路径会真正关闭 WebSocket 重连，且刷新 token 可能触发滑块/风控；短时间内并发或
+# 连环触发会互相踩踏（2026-09-10 事故：97 秒内两次重连，其中一次用未变化的旧 token
+# 重新 /reg，直接制造出僵尸连接）。故加单飞 + 冷却，冷却期内直接放弃，不做重连。
+FORCED_RECONNECT_COOLDOWN_S = int(os.getenv('FORCED_RECONNECT_COOLDOWN_S', '300'))
+
 DEFAULT_HEADERS = {
     'accept': 'application/json',
     'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
@@ -170,6 +176,12 @@ class XianyuAsync:
         self.order_confirm_cooldown = 300  # 确认发货冷却时间（秒）
         self.yifan_account_lock = asyncio.Lock()  # 亦凡账号锁
         self.yifan_account_waiting = False  # 亦凡账号等待状态
+        # 强制重连（刷新token+断线重连）单飞锁与冷却计时：同一时刻只允许一次重连在跑，
+        # 避免并发调用（多条创建会话失败同时触发）互相踩踏出僵尸连接。
+        self._forced_reconnect_lock = asyncio.Lock()
+        self._last_forced_reconnect_ts = 0.0
+        # 当前已建立连接所用的 token（用于判断刷新后 token 是否真的变化）
+        self._connection_token: Optional[str] = None
         
         # 初始化自动发货处理器
         from app.services.xianyu.auto_delivery_handler import AutoDeliveryHandler
@@ -2252,25 +2264,53 @@ class XianyuAsync:
             raise
 
     async def _reconnect_with_new_token(self, timeout: float = 50.0) -> bool:
-        """先刷新 token，成功拿到新 token 后才强制断线重连，等待新连接就绪。
+        """强制重连入口：单飞锁 + 冷却，再执行「刷新 token → 断线重连」。
+
+        并发保护：多条创建会话失败会几乎同时调用本方法，并发重连会互相踩踏
+        （各自关闭/等待 ws，判断依据是被对方改写的连接对象）。2026-09-10 事故正是
+        97 秒内两次重连叠加，其中一次带着未变化的旧 token 重新 /reg，直接产生僵尸连接，
+        因此这里用单飞锁串行化。
+        冷却保护：冷却期内直接放弃，避免刷新 token 连环触发滑块/风控。
+        """
+        async with self._forced_reconnect_lock:
+            since = time.time() - self._last_forced_reconnect_ts
+            if since < FORCED_RECONNECT_COOLDOWN_S:
+                logger.warning(
+                    f"【{self.cookie_id}】距上次强制重连仅 {since:.0f}s"
+                    f"（冷却 {FORCED_RECONNECT_COOLDOWN_S}s），本次跳过重连，保留当前连接"
+                )
+                return False
+            ok = await self._reconnect_with_new_token_impl(timeout)
+            if ok:
+                self._last_forced_reconnect_ts = time.time()
+            return ok
+
+    async def _reconnect_with_new_token_impl(self, timeout: float = 50.0) -> bool:
+        """先刷新 token，**确认拿到不同的新 token** 后才强制断线重连，等待新连接就绪。
 
         token 只在建连的 /reg 头里使用一次，因此让新 token 生效必须带着它重新注册——
         即强制重连。做法：清掉缓存 token 与内存 token → 主动刷新一次 token：
         - 刷新失败（滑块/风控/网络等，拿不到新 token）：不关闭现有连接，直接返回 False，
           保住当前连接的实时消息接收，本次发货失败留给下轮重试，避免风控期白白断连。
-        - 刷新成功：关闭当前 ws，主连接循环自动重连；重连的 init() 见 current_token
-          已就绪（本方法已刷新）不再重复刷新，直接带「新」token 重新 /reg。
+        - 刷新"成功"但 token 与当前连接所用的一致（命中数据库缓存旧值 / 过期回退）：
+          同样不重连。⚠️ 这是僵尸连接的根因——用同一个 token 重复 /reg，服务端会接受
+          注册（心跳正常）但不再下发业务帧，连接从此"活着却收不到消息"。
+        - 刷新确实换到新 token：关闭当前 ws，主连接循环自动重连；重连的 init() 见
+          current_token 已就绪（本方法已刷新）不再重复刷新，直接带「新」token 重新 /reg。
 
         Args:
             timeout: 等待重连就绪的最长时间（秒）
         Returns:
-            刷新成功且重连就绪返回 True；无连接可关 / 刷新失败 / 超时未就绪返回 False
-            （由调用方决定是否重试）
+            拿到新 token 且重连就绪返回 True；无连接可关 / 刷新失败 / token 未变化 /
+            超时未就绪返回 False（由调用方决定是否重试）
         """
         old_ws = self.connection_manager.ws
         if old_ws is None:
             logger.warning(f"【{self.cookie_id}】当前无 WebSocket 连接，无法断线重连刷新 token")
             return False
+
+        # 记下当前连接建连 /reg 时使用的 token，用于判断本次刷新是否真的换了 token
+        connection_token = self._connection_token or self.current_token
 
         # 清空内存 token 并删除缓存，保证接下来 refresh_token() 拉取「新」token 且覆盖缓存
         self.current_token = None
@@ -2302,9 +2342,19 @@ class XianyuAsync:
                 f"并非新 token，放弃断线重连（保留当前连接），本次发货失败留待重试"
             )
             return False
-        # 刷新成功：清除「启动过期 token」标记，避免关连接后被 _reject_expired_startup_token 误清掉新 token
+        # 治本判据：token 没变就没有重连的必要。滑块失败回退旧 token、命中数据库缓存旧 token
+        # 等场景都会走到这里——若照旧关闭连接重连，就是拿同一 token 重复 /reg，服务端接受注册
+        # 却不再推业务帧（僵尸连接）。一律保留当前连接。
+        if connection_token and new_token == connection_token:
+            logger.error(
+                f"【{self.cookie_id}】刷新 token 未变化（状态: {refresh_status}，与当前连接为同一 token），"
+                f"主动放弃断线重连：同一 token 重复注册会导致服务端不再推送业务消息（僵尸连接）。"
+                f"保留当前连接，本次发货失败留待重试"
+            )
+            return False
+        # 刷新成功且 token 确实变化：清除「启动过期 token」标记，避免关连接后被 _reject_expired_startup_token 误清掉新 token
         self._using_expired_startup_token = False
-        logger.info(f"【{self.cookie_id}】token 刷新成功，准备关闭当前 ws 带新 token 重连")
+        logger.info(f"【{self.cookie_id}】token 刷新成功且已换新 token，准备关闭当前 ws 重连")
 
         # 关闭当前 ws，触发主连接循环退出 async with 并重连（不调 restart_instance：那会取消当前任务）
         try:
@@ -2979,6 +3029,9 @@ class XianyuAsync:
                             self.connection_manager.network_failures = 0  # 成功连接后重置网络错误计数
                             self.connection_manager.last_successful_connection = time.time()
                             self._connection_start_time = time.time()  # 记录连接开始时间
+                            # 记录本次建连实际使用的 token：后续「强制重连」只在刷新拿到
+                            # 不同 token 时才执行，避免用同一个 token 重复 /reg 制造僵尸连接
+                            self._connection_token = self.current_token
                             
                             # 启动后台任务
                             logger.info(f"【{self.cookie_id}】启动后台任务...")
