@@ -304,7 +304,9 @@ def decide_resume(checkpoint: Optional[Dict[str, Any]], now: Optional[float] = N
     """
     if not RESUME_ENABLED or RESUME_MODE == "off" or not checkpoint:
         return None
-    pts = _as_positive_int(checkpoint.get("pts"))
+    # 归一化放这里（而不是只在提取侧）：Redis 里可能存着历史版本写入的 µs 量级值，
+    # 读取侧不归一化就会绕过下面的时效校验（2026-09-10 演练实测踩到）
+    pts = normalize_pts_ms(checkpoint.get("pts"))
     if not pts:
         return None
     saved_ts = checkpoint.get("saved_ts")
@@ -330,11 +332,15 @@ def decide_resume(checkpoint: Optional[Dict[str, Any]], now: Optional[float] = N
             )
             return None
     seq = _as_positive_int(checkpoint.get("seq")) or 0
+    # 上线值用服务器自己的原始量级（raw），而不是我们归一化后的 ms×1000 猜测——
+    # 原实现发的是 ms×1000，恰好等于 µs，与帧里的原始 pts 量级一致，故优先 raw。
+    wire_pts = _as_positive_int(checkpoint.get("raw_pts")) or (pts * RESUME_PTS_SCALE)
     return {
         "pts": pts,
+        "raw_pts": wire_pts,
         "seq": seq,
-        "sync": f"{pts},{seq};0;0;",
-        "ack_pts": pts * RESUME_PTS_SCALE,
+        "sync": f"{wire_pts},{seq};0;0;",
+        "ack_pts": wire_pts,
         "use_sync_header": RESUME_MODE == "both",
         "gap_s": round(gap_s, 1),
     }
@@ -346,16 +352,23 @@ def _key(account_id: str) -> str:
     return f"{SYNC_PTS_KEY_PREFIX}{account_id}"
 
 
-async def save_checkpoint(account_id: str, pts: int, seq: Optional[int] = None) -> bool:
-    """持久化检查点（fail-open，异常返回 False）"""
+async def save_checkpoint(
+    account_id: str, pts: int, seq: Optional[int] = None, raw_pts: Optional[int] = None
+) -> bool:
+    """持久化检查点（fail-open，异常返回 False）
+
+    value 格式：``<pts_ms>,<seq>,<saved_ts>,<raw_pts>``
+    —— pts_ms 用于时效校验/比较；raw_pts 是服务器原始量级，重连时原样上线。
+    """
     try:
-        pts = _as_positive_int(pts)
-        if not pts:
+        pts_ms = normalize_pts_ms(pts)
+        if not pts_ms:
             return False
         from common.db.redis_client import get_redis_client
 
         rc = await get_redis_client()
-        value = f"{pts},{_as_positive_int(seq) or 0},{time.time():.3f}"
+        raw = _as_positive_int(raw_pts) or _as_positive_int(pts) or pts_ms
+        value = f"{pts_ms},{_as_positive_int(seq) or 0},{time.time():.3f},{raw}"
         await rc.set(_key(account_id), value, ex=SYNC_PTS_TTL_S)
         return True
     except Exception as e:
@@ -369,11 +382,11 @@ async def load_checkpoint(account_id: str) -> Optional[Dict[str, Any]]:
         from common.db.redis_client import get_redis_client
 
         rc = await get_redis_client()
-        raw = await rc.get(_key(account_id))
-        if not raw:
+        raw_value = await rc.get(_key(account_id))
+        if not raw_value:
             return None
-        parts = str(raw).split(",")
-        pts = _as_positive_int(parts[0]) if parts else None
+        parts = str(raw_value).split(",")
+        pts = normalize_pts_ms(parts[0]) if parts else None
         if not pts:
             return None
         seq = _as_positive_int(parts[1]) if len(parts) > 1 else None
@@ -383,7 +396,8 @@ async def load_checkpoint(account_id: str) -> Optional[Dict[str, Any]]:
                 saved_ts = float(parts[2])
             except ValueError:
                 saved_ts = None
-        return {"pts": pts, "seq": seq, "saved_ts": saved_ts}
+        raw_pts = _as_positive_int(parts[3]) if len(parts) > 3 else None
+        return {"pts": pts, "seq": seq, "saved_ts": saved_ts, "raw_pts": raw_pts}
     except Exception as e:
         logger.debug(f"【{account_id}】[sync-pts] 读取检查点失败(不影响主流程): {e}")
         return None
@@ -420,7 +434,9 @@ async def record_from_frame(account_id: str, message_data: Any) -> Optional[Dict
         if not got:
             log_frame_shape_once(account_id, message_data)
             return None
-        saved = await save_checkpoint(account_id, got["pts"], got.get("seq"))
+        saved = await save_checkpoint(
+            account_id, got["pts"], got.get("seq"), got.get("raw_pts")
+        )
         if saved:
             marker = f"{account_id}|{got.get('source')}"
             if marker not in _SOURCE_LOGGED:
