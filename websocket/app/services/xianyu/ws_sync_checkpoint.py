@@ -186,29 +186,52 @@ def describe_frame_shape(message_data: Any) -> str:
     try:
         if not isinstance(message_data, dict):
             return f"type={type(message_data).__name__}"
+        lwp = message_data.get("lwp") or ""
         headers = message_data.get("headers")
         header_keys = sorted(headers.keys()) if isinstance(headers, dict) else []
         body = message_data.get("body")
         body_keys = sorted(body.keys()) if isinstance(body, dict) else []
         item_keys = []
+        item_plain = {}
         if isinstance(body, dict):
             package = body.get("syncPushPackage")
             if isinstance(package, dict) and isinstance(package.get("data"), list):
                 first = package["data"][0] if package["data"] else None
                 if isinstance(first, dict):
                     item_keys = sorted(first.keys())
-        return f"header键={header_keys} body键={body_keys} 首条data键={item_keys}"
+                    # 非密文字段原样带出（pts/seq/时间戳等常在这里）
+                    item_plain = {k: v for k, v in first.items() if k != "data"}
+        return (
+            f"lwp={lwp} header键={header_keys} body键={body_keys} "
+            f"首条data键={item_keys} 首条非密文字段={item_plain}"
+        )
     except Exception:
         return "结构描述失败"
 
 
-def log_frame_shape_once(account_id: str, message_data: Any) -> None:
-    """每账号仅记录一次帧结构，便于确认 pts 实际字段名"""
+def _frame_kind(message_data: Any) -> str:
+    """给帧分类，用于实现每种帧只观测一次"""
     try:
-        if account_id in _FRAME_SHAPE_LOGGED:
+        if not isinstance(message_data, dict):
+            return "非dict"
+        body = message_data.get("body")
+        if isinstance(body, dict) and "syncPushPackage" in body:
+            return "syncPushPackage"
+        lwp = message_data.get("lwp")
+        return f"lwp={lwp}" if lwp else "无lwp"
+    except Exception:
+        return "未知"
+
+
+def log_frame_shape_once(account_id: str, message_data: Any) -> None:
+    """每账号每种帧仅记录一次结构（含 lwp 与非密文字段），便于确认 pts 实际字段名"""
+    try:
+        kind = _frame_kind(message_data)
+        marker = f"{account_id}|{kind}"
+        if marker in _FRAME_SHAPE_LOGGED:
             return
-        _FRAME_SHAPE_LOGGED.add(account_id)
-        logger.info(f"【{account_id}】[sync-pts] 帧结构观测(仅一次): {describe_frame_shape(message_data)}")
+        _FRAME_SHAPE_LOGGED.add(marker)
+        logger.info(f"【{account_id}】[sync-pts] 帧结构观测({kind}): {describe_frame_shape(message_data)}")
     except Exception:
         pass
 
