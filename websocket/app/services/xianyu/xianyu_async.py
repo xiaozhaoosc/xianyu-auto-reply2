@@ -2281,8 +2281,9 @@ class XianyuAsync:
                 )
                 return False
             ok = await self._reconnect_with_new_token_impl(timeout)
-            if ok:
-                self._last_forced_reconnect_ts = time.time()
+            # 按「尝试」计时而非「成功」计时：刷新失败（滑块/风控）恰恰是最需要静默的场景，
+            # 若只在成功时置位冷却，失败时下一次创建会话又会立刻再刷新一次，反而连环触发风控。
+            self._last_forced_reconnect_ts = time.time()
             return ok
 
     async def _reconnect_with_new_token_impl(self, timeout: float = 50.0) -> bool:
