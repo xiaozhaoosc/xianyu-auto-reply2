@@ -2121,10 +2121,22 @@ class XianyuAsync:
             return chat_id
 
         # 取不到 cid（闲鱼常返回 {"headers":{...}, "code": 400} 无 body）：
-        # 该情形可能是连接所用 token 已失效，尝试「刷新 token（成功才重连）→ 强制重连（重连 /reg 用新 token）→ 重试一次」
+        # 该情形可能是连接所用 token 已失效，但也可能是重复创建/平台暂时性拒绝。
+        # 先尝试从 Redis 复用推送侧缓存的最新会话 cid（backend-web 收到买家消息时写入）：
+        # 命中缓存则说明会话确实存在，直接复用，避免触发「刷新token+断线重连」——
+        # 那会把连接搞成僵尸（重连后服务端不推业务帧，心跳却正常），是本功能最贵的代价。
         resp_code = response.get("code") if isinstance(response, dict) else None
+        reused_cid = await self._try_reuse_cached_cid(to_user_id)
+        if reused_cid:
+            logger.warning(
+                f"【{self.cookie_id}】创建会话未获取到 cid（闲鱼返回 code={resp_code}），"
+                f"复用推送缓存会话 cid={reused_cid}（跳过刷新token+断线重连）: "
+                f"to_user_id={to_user_id}, item_id={item_id}"
+            )
+            return reused_cid
+
         logger.warning(
-            f"【{self.cookie_id}】创建会话未获取到 cid（闲鱼返回 code={resp_code}），"
+            f"【{self.cookie_id}】创建会话未获取到 cid（闲鱼返回 code={resp_code}），且无缓存可用，"
             f"尝试刷新 token 并断线重连后重试: to_user_id={to_user_id}, item_id={item_id}"
         )
         if await self._reconnect_with_new_token():
@@ -2316,6 +2328,37 @@ class XianyuAsync:
 
         logger.error(f"【{self.cookie_id}】等待断线重连就绪超时（{timeout}s），放弃本次重试")
         return False
+
+    async def _try_reuse_cached_cid(self, to_user_id: str) -> Optional[str]:
+        """创建会话失败时，尝试复用推送侧缓存的会话 cid。
+
+        backend-web chat_new 推送通道收到买家消息时，会把 (account_id, buyer_id) →
+        最近一次会话 cid 写入 Redis（key: chat:last_cid:<account_id>:<buyer_id>, 7天TTL）。
+        买家若已发过消息，会话必然存在，直接复用该 cid 即可，无需重新 create，
+        更不需要走「刷新token+断线重连」——那会把连接搞成僵尸。
+
+        Args:
+            to_user_id: 对方用户ID（买家ID，不带 @goofish 后缀）
+
+        Returns:
+            缓存的 cid（不带 @goofish 后缀）；无缓存或 Redis 异常返回 None（fail-open）
+        """
+        try:
+            from common.db.redis_client import get_redis_client
+            rc = await get_redis_client()
+            key = f"chat:last_cid:{self.cookie_id}:{to_user_id}"
+            raw = await rc.get(key)
+            if not raw:
+                return None
+            cid = str(raw)
+            # 去掉 @goofish 后缀，与 create_chat 返回口径一致
+            cid = cid.split("@")[0] if "@" in cid else cid
+            return cid or None
+        except Exception as e:
+            logger.debug(
+                f"【{self.cookie_id}】读取会话cid缓存失败(不影响主流程): {self._safe_str(e)}"
+            )
+            return None
 
     @staticmethod
     def _extract_cid_from_create_chat_response(response: dict) -> Optional[str]:

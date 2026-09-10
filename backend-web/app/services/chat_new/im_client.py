@@ -1180,6 +1180,16 @@ class GoofishImClient:
                         from common.db.redis_client import get_redis_client
                         _rc = await get_redis_client()
                         await _rc.set(f"watchdog:push_ts:{self.account_id}", str(time.time()), ex=86400)
+                        # 同时缓存最近一条买家消息的会话 cid（含买家ID键），供 ws 侧创建会话失败时回填：
+                        # create_chat 拿不到 cid 时先复用本缓存，避免触发「刷新token+断线重连」制造僵尸连接
+                        _push_buyer = str(parsed.get("message", {}).get("senderId", "") or "")
+                        _push_cid = str(parsed.get("cid", "") or "")
+                        if _push_buyer and _push_cid:
+                            await _rc.set(
+                                f"chat:last_cid:{self.account_id}:{_push_buyer}",
+                                _push_cid,
+                                ex=604800,  # 7天
+                            )
                     except Exception:
                         pass
                 for cb in self._push_callbacks:
