@@ -150,6 +150,11 @@ export function ChatNew() {
   const activeCidRef = useRef(activeCid)
   useEffect(() => { activeCidRef.current = activeCid }, [activeCid])
   const reloadOrdersRef = useRef<() => void>(() => {})
+  // 加载会话/消息请求的序号与目标标识：防止快速切换账号/会话时，
+  // 旧请求的慢响应到达后覆盖新选中账号/会话的数据
+  const convReqIdRef = useRef(0)
+  const msgReqIdRef = useRef(0)
+  const msgTargetKeyRef = useRef('')
 
   // ==================== 按账号缓存：切换账号时保留数据 ====================
   /** 每个账号的会话列表缓存 */
@@ -225,8 +230,11 @@ export function ChatNew() {
     return [newConv, ...convs]
   }
 
-  /** 追加消息到消息列表（去重自己发的） */
+  /** 追加消息到消息列表（按 messageId 去重，自发送消息再按内容+时间兜底去重） */
   const appendMsg = (msgs: ChatMessage[], msg: ChatMessage): ChatMessage[] => {
+    if (msg.messageId && msgs.some((m) => m.messageId === msg.messageId)) {
+      return msgs
+    }
     if (msg.isSelf && msgs.some((m) => m.isSelf && m.text === msg.text && Math.abs(m.time - msg.time) < 5000)) {
       return msgs
     }
@@ -236,25 +244,25 @@ export function ChatNew() {
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     const summary = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
     const isActiveAccount = accountId === activeAccountIdRef.current
+    const isViewingConv = isActiveAccount && cid === activeCidRef.current
+
+    // 无论账号是否活跃、会话是否正在查看，都同步写入对应缓存，
+    // 避免切回该账号/点开该会话时命中旧缓存而缺失最新消息
+    const cached = convsCacheRef.current[accountId]
+    if (cached) {
+      cached.convs = updateConvList(cached.convs, cid, summary, msg, isViewingConv)
+    }
+    const msgCache = msgsCacheRef.current[accountId]?.[cid]
+    if (msgCache) {
+      msgCache.msgs = appendMsg(msgCache.msgs, msg)
+    }
 
     if (isActiveAccount) {
       // 活跃账号 → 直接更新 React state
-      const isViewingConv = cid === activeCidRef.current
       setConversations((prev) => updateConvList(prev, cid, summary, msg, isViewingConv))
       if (isViewingConv) {
         setMessages((prev) => appendMsg(prev, msg))
         window.setTimeout(() => reloadOrdersRef.current(), 900)
-      }
-    } else {
-      // 后台账号 → 更新缓存（不触发渲染）
-      const cached = convsCacheRef.current[accountId]
-      if (cached) {
-        cached.convs = updateConvList(cached.convs, cid, summary, msg, false)
-      }
-      // 如果该会话的消息也在缓存中，追加消息
-      const msgCache = msgsCacheRef.current[accountId]?.[cid]
-      if (msgCache) {
-        msgCache.msgs = appendMsg(msgCache.msgs, msg)
       }
     }
   }, [])
@@ -341,6 +349,8 @@ export function ChatNew() {
         setConversations([])
         setActiveCid('')
         setMessages([])
+        msgTargetKeyRef.current = ''
+        msgReqIdRef.current++
         // 手机端：当前账号被断开后回到"账号"Tab
         setMobileTab('accounts')
       }
@@ -370,7 +380,10 @@ export function ChatNew() {
       if (!append) setLoadingConvs(true)
       try {
         const cursor = append ? convCursor : undefined
+        const reqId = ++convReqIdRef.current
         const res = await getConversations(accountId, cursor ?? undefined)
+        // 过期保护：期间发起了新的加载或切换了账号，则丢弃本次响应，避免旧账号数据覆盖新账号
+        if (reqId !== convReqIdRef.current || accountId !== activeAccountIdRef.current) return
         // 从本地缓存补填已有的头像和昵称，避免刷新后信息消失
         const withCachedAvatar = res.conversations.map((c: Conversation) => {
           const cached = userInfoCacheRef.current[c.otherUserId]
@@ -417,6 +430,8 @@ export function ChatNew() {
       setConversations([])
       setActiveCid('')
       setMessages([])
+      msgTargetKeyRef.current = ''
+      msgReqIdRef.current++
       return
     }
     const acc = accountsRef.current.find((a) => a.account_id === activeAccountId)
@@ -427,6 +442,8 @@ export function ChatNew() {
       setMessages([])
       setMsgCursor(null)
       setMsgHasMore(false)
+      msgTargetKeyRef.current = ''
+      msgReqIdRef.current++
       return
     }
 
@@ -445,6 +462,9 @@ export function ChatNew() {
     // 2. 恢复上次选中的会话和消息
     const prevCid = activeConvPerAccountRef.current[activeAccountId] || ''
     setActiveCid(prevCid)
+    // 同步设置消息目标并作废在途请求，防止旧账号/旧会话的慢响应覆盖
+    msgTargetKeyRef.current = prevCid ? `${activeAccountId}:${prevCid}` : ''
+    msgReqIdRef.current++
     if (prevCid) {
       const cachedMsgs = msgsCacheRef.current[activeAccountId]?.[prevCid]
       if (cachedMsgs) {
@@ -452,9 +472,11 @@ export function ChatNew() {
         setMsgHasMore(cachedMsgs.hasMore)
         setMsgCursor(cachedMsgs.cursor)
       } else {
+        // 缓存缺失时主动从服务器加载，避免聊天面板空白
         setMessages([])
         setMsgCursor(null)
         setMsgHasMore(false)
+        loadMessages(activeAccountId, prevCid)
       }
     } else {
       setMessages([])
@@ -546,7 +568,11 @@ export function ChatNew() {
       if (!append) setLoadingMsgs(true)
       try {
         const cursor = append ? msgCursor : undefined
+        const reqId = ++msgReqIdRef.current
+        const reqKey = `${accountId}:${cid}`
         const res = await getMessages(accountId, cid, cursor ?? undefined)
+        // 过期保护：期间切换了账号/会话或发起了新的加载，则丢弃本次响应
+        if (reqId !== msgReqIdRef.current || reqKey !== msgTargetKeyRef.current) return
         if (append) {
           // 追加历史消息到前面
           setMessages((prev) => [...res.messages, ...prev])
@@ -569,6 +595,9 @@ export function ChatNew() {
   // 选中会话时：优先从缓存恢复消息，无缓存才加载
   const handleSelectConversation = (cid: string) => {
     setActiveCid(cid)
+    // 同步更新消息目标并作废在途请求，避免旧会话的慢响应覆盖当前会话
+    msgTargetKeyRef.current = `${activeAccountId}:${cid}`
+    msgReqIdRef.current++
     // 手机端：选中会话后切到"聊天"Tab
     setMobileTab('chat')
     // 清零该会话的未读数

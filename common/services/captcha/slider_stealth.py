@@ -126,6 +126,7 @@ class PlaywrightSliderService:
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
+        "--no-proxy-server",
     ]
 
     def __init__(
