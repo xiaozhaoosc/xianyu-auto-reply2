@@ -235,6 +235,7 @@ class MigrationPublishTask:
         若任务带 category_override_json，则走两阶段协议锁定用户指定类目：
         第一次推荐拿 card_list → build_category_selection 选中覆盖类目 → 第二次
         推荐回传完整字段（tb_cat_id/leaf_id 由平台补齐）。不改标题，只改类目选定。
+        覆盖类目不在本次推荐候选里时回退推荐首选，不硬失败。
         """
         try:
             from common.services.backend_web_loader import load_backend_web_class
@@ -264,6 +265,7 @@ class MigrationPublishTask:
             if not candidates:
                 return None
 
+            pick = None
             if override:
                 from common.services.backend_web_loader import _load_backend_web_module
                 sel_mod = _load_backend_web_module(
@@ -273,24 +275,28 @@ class MigrationPublishTask:
                 try:
                     selection = sel_mod.build_category_selection(first.get("card_list") or [], override)
                 except Exception as e:
-                    logger.warning(f"[迁移发布] 类目覆盖失效(候选已变化): {override} err={e}")
-                    return None
-                second = await svc.recommend(
-                    title=task.title,
-                    description=task.description or task.title,
-                    cookie=account.cookie,
-                    account_id=account.account_id,
-                    owner_id=None,
-                    **selection,
-                )
-                candidates = second.get("candidates") or candidates
-                pick = next((c for c in candidates if c.get("is_selected")), None)
-                if pick is None:
-                    logger.warning("[迁移发布] 类目覆盖后未拿到选中候选")
-                    return None
-                logger.info(f"[迁移发布] 使用类目覆盖: {override.get('cat_name')} → "
-                            f"tb_cat_id={pick.get('tb_cat_id')} cat_id={pick.get('cat_id')}")
-            else:
+                    # 覆盖类目不在本次推荐候选里（例如该标题不匹配 电子资料）→ 回退推荐首选，不硬失败
+                    logger.warning(f"[迁移发布] 类目覆盖失效(候选已变化)，回退推荐首选: {e}")
+                else:
+                    second = await svc.recommend(
+                        title=task.title,
+                        description=task.description or task.title,
+                        cookie=account.cookie,
+                        account_id=account.account_id,
+                        owner_id=None,
+                        **selection,
+                    )
+                    second_candidates = second.get("candidates") or []
+                    if second_candidates:
+                        candidates = second_candidates
+                    pick = next((c for c in candidates if c.get("is_selected")), None)
+                    if pick is None:
+                        logger.warning("[迁移发布] 类目覆盖后未拿到选中候选，回退推荐首选")
+                    else:
+                        logger.info(f"[迁移发布] 使用类目覆盖: {override.get('cat_name')} → "
+                                    f"tb_cat_id={pick.get('tb_cat_id')} cat_id={pick.get('cat_id')}")
+
+            if pick is None:
                 pick = next((c for c in candidates if c.get("is_selected")), None) or candidates[0]
 
             if not (pick.get("cat_id") and pick.get("channel_cat_id")):

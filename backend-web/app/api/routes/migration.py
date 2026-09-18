@@ -70,6 +70,14 @@ class TaskUpdateRequest(BaseModel):
 
 DEFAULT_DESCRIPTION_TEMPLATE = "{title}\n\n下单后自动发货，无需等待。\n虚拟商品售出不退，请确认后再拍。"
 
+# 迁移默认类目：电子资料（channel_cat_id 来自推荐接口候选，发布时用两阶段协议锁定；
+# 目标账号推荐候选里没有该类目时，发布流程回退到推荐首选，不硬失败）
+DEFAULT_CATEGORY_OVERRIDE = {
+    "cat_name": "电子资料",
+    "channel_cat_id": "202036301",
+    "channel_cat_name": "电子资料",
+}
+
 
 # ---------------- 工具函数 ----------------
 
@@ -295,6 +303,7 @@ async def create_batch(
             title=title,
             price=price,
             category_id=(mat or {}).get("category_id"),
+            category_override_json=json.dumps(DEFAULT_CATEGORY_OVERRIDE, ensure_ascii=False),
             description=_render_description(batch.description_template, title),
             images_json=json.dumps((mat or {}).get("images") or [], ensure_ascii=False),
             status="pending",
