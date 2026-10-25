@@ -12,16 +12,8 @@ export DISPLAY="${DISPLAY:-:10}"
 # Token刷新间隔（秒），23小时=82800秒，默认20小时=72000秒
 export TOKEN_REFRESH_INTERVAL="${TOKEN_REFRESH_INTERVAL:-82800}"
 
-# 数据库/Redis 连接（默认指向本机 dev 库，可用环境变量覆盖）
-export MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
-export MYSQL_PORT="${MYSQL_PORT:-3306}"
-export MYSQL_USER="${MYSQL_USER:-xianyu}"
-export MYSQL_PASSWORD="${MYSQL_PASSWORD:-xianyu@2026}"
-export MYSQL_DATABASE="${MYSQL_DATABASE:-xianyu_data}"
-export REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
-export REDIS_PORT="${REDIS_PORT:-16379}"
-export REDIS_PASSWORD="${REDIS_PASSWORD:-dev_QpFZuYd0wufMW9FuMfAL}"
-export REDIS_DB="${REDIS_DB:-3}"
+# 数据库/Redis 连接由各服务目录下的 .env 提供（参考各服务 .env.example）。
+# 本脚本不内置任何主机、账号或口令；如需覆盖，请在运行前于外部环境导出 MYSQL_* / REDIS_* 变量。
 export HOST="${HOST:-0.0.0.0}"
 
 VENV_PYTHON="${PROJECT_DIR}/.venv/bin/python"
@@ -64,6 +56,26 @@ start_service() {
 # 1. Backend-Web (8089)
 start_service "Backend-Web" "${PROJECT_DIR}/backend-web" \
     "${VENV_PYTHON} main.py"
+
+# 等待 Backend-Web 就绪（内部 API 令牌由 backend 首次启动时初始化）
+if command -v curl >/dev/null 2>&1; then
+    echo "等待 Backend-Web 健康检查..."
+    BACKEND_READY=0
+    for _ in $(seq 1 90); do
+        if curl -fsS --max-time 2 http://127.0.0.1:8089/health >/dev/null 2>&1; then
+            BACKEND_READY=1
+            break
+        fi
+        sleep 2
+    done
+    if [ "$BACKEND_READY" -eq 1 ]; then
+        echo "Backend-Web 已就绪"
+    else
+        echo "WARNING: Backend-Web 180 秒内未就绪，Scheduler/WebSocket 可能因内部令牌未初始化而启动失败"
+    fi
+else
+    echo "WARNING: 未找到 curl，跳过 Backend-Web 健康等待"
+fi
 
 # 2. Scheduler (8091)
 start_service "Scheduler" "${PROJECT_DIR}/scheduler" \
