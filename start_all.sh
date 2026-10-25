@@ -2,6 +2,14 @@
 # 在独立窗口启动全部 4 个服务（含 .browsers 环境变量）
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 预检：三个服务必须各自存在 .env（连接配置不再内置在启动脚本）
+for _svc in backend-web scheduler websocket; do
+    if [ ! -f "${PROJECT_DIR}/${_svc}/.env" ]; then
+        echo "[ERROR] 缺少 ${_svc}/.env，请先复制 ${_svc}/.env.example 为 ${_svc}/.env 并填写连接信息"
+        exit 1
+    fi
+done
 export PLAYWRIGHT_BROWSERS_PATH="${PROJECT_DIR}/.browsers"
 export NO_PROXY="localhost,127.0.0.1"
 # 清除可能干扰的系统代理（Playwright 滑块浏览器已加 --no-proxy-server，此处保险）

@@ -10,6 +10,14 @@ set "PROJECT_DIR=%~dp0"
 rem strip trailing backslash
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
+rem 预检：三个服务必须各自存在 .env（连接配置不再内置在启动脚本）
+for %%D in (backend-web scheduler websocket) do (
+    if not exist "%PROJECT_DIR%\%%D\.env" (
+        echo [ERROR] 缺少 %%D\.env，请先复制 %%D\.env.example 为 %%D\.env 并填写连接信息
+        exit /b 1
+    )
+)
+
 set "PLAYWRIGHT_BROWSERS_PATH=%PROJECT_DIR%\.browsers"
 set "NO_PROXY=localhost,127.0.0.1"
 rem clear possibly interfering system proxy (Playwright slider browser already uses --no-proxy-server)
