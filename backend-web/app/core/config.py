@@ -39,7 +39,7 @@ class BackendWebConfig(BaseConfig):
     # 此处 default 仅作占位，运行期会被数据库中的值覆盖。
     jwt_secret_key: str = Field(default="change-me", repr=False)
     jwt_algorithm: str = Field(default="HS256")
-    access_token_expire_minutes: int = Field(default=30)
+    access_token_expire_minutes: int = Field(default=1440)
     refresh_token_expire_minutes: int = Field(default=60 * 24 * 7)
     
     # CORS配置
@@ -51,11 +51,11 @@ class BackendWebConfig(BaseConfig):
     
     # 服务间通信URL
     websocket_service_url: str = Field(
-        default="http://localhost:8090",
+        default="http://127.0.0.1:8090",
         alias="WEBSOCKET_SERVICE_URL"
     )
     scheduler_service_url: str = Field(
-        default="http://localhost:8091",
+        default="http://127.0.0.1:8091",
         alias="SCHEDULER_SERVICE_URL"
     )
     
@@ -69,7 +69,7 @@ class BackendWebConfig(BaseConfig):
 
     # Backend-Web服务的公网访问地址（用于生成文件URL）
     backend_web_public_url: str = Field(
-        default="http://localhost:8089",
+        default="http://127.0.0.1:8089",
         alias="BACKEND_WEB_PUBLIC_URL"
     )
 

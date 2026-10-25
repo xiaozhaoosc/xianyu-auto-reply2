@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   ArrowUpCircle, BarChart3, Bell, Bot, Code, Github, Gift,
-  Globe, Loader2, MessageCircle, MessageSquare, RefreshCw, Truck,
+  Globe, Loader2, MessageCircle, MessageSquare, RefreshCw, Truck, Cloud,
   UserCheck, Users, X,
 } from 'lucide-react'
 import { getQrcodeUrl } from '@/api/settings'
@@ -19,6 +19,14 @@ import { checkUpdate, type VersionCheckResult } from '@/api/version'
 import { useUIStore } from '@/store/uiStore'
 import { useVersionStore } from '@/store/versionStore'
 import { UpdateModal } from './UpdateModal'
+
+const DEFAULT_QRCODE_URLS = {
+  wechat: 'https://xy.zhinianboke.com/static/qrcode/wechat-group.png',
+  qq: 'https://xy.zhinianboke.com/static/qrcode/qq-group.jpg',
+  wechat_official: 'https://xy.zhinianboke.com/static/qrcode/wechat-official-group.jpg',
+  telegram: 'https://xy.zhinianboke.com/static/qrcode/telegram-group.png',
+  reward: 'https://xy.zhinianboke.com/static/qrcode/reward-group.png',
+} as const
 
 export function About() {
   const { addToast } = useUIStore()
@@ -29,11 +37,11 @@ export function About() {
   const [totalUsers, setTotalUsers] = useState(0)
 
   // 群二维码
-  const [wechatQrcode, setWechatQrcode] = useState<string | null>(null)
-  const [qqQrcode, setQqQrcode] = useState<string | null>(null)
-  const [wechatOfficialQrcode, setWechatOfficialQrcode] = useState<string | null>(null)
-  const [telegramQrcode, setTelegramQrcode] = useState<string | null>(null)
-  const [rewardQrcode, setRewardQrcode] = useState<string | null>(null)
+  const [wechatQrcode, setWechatQrcode] = useState<string | null>(DEFAULT_QRCODE_URLS.wechat)
+  const [qqQrcode, setQqQrcode] = useState<string | null>(DEFAULT_QRCODE_URLS.qq)
+  const [wechatOfficialQrcode, setWechatOfficialQrcode] = useState<string | null>(DEFAULT_QRCODE_URLS.wechat_official)
+  const [telegramQrcode, setTelegramQrcode] = useState<string | null>(DEFAULT_QRCODE_URLS.telegram)
+  const [rewardQrcode, setRewardQrcode] = useState<string | null>(DEFAULT_QRCODE_URLS.reward)
 
   // 版本检测状态
   const [updateInfo, setUpdateInfo] = useState<VersionCheckResult | null>(null)
@@ -430,6 +438,15 @@ export function About() {
         </div>
         <div className="vben-card-body">
           <div className="flex gap-3">
+            <a
+              href="https://pan.quark.cn/s/deaafecd8824"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-sm"
+            >
+              <Cloud className="w-4 h-4" />
+              <span>Windows本地版</span>
+            </a>
             <a
               href="https://github.com/zhinianboke/xianyu-auto-reply"
               target="_blank"

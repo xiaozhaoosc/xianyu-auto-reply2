@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.core.config import get_settings
+from common.db.redis_client import close_redis_client, initialize_redis_client
 from common.services.captcha.slider_mode import refresh_slider_mode_from_database
 from common.services.risk_control_log_cleanup_service import (
     fail_processing_risk_control_logs_on_restart,
@@ -77,6 +78,21 @@ async def lifespan(app: FastAPI):
         logger.error("数据库连接失败，服务退出")
         sys.exit(1)
 
+    # 初始化 Redis 健康连接池；失败时按指数退避重试，最终失败则停止启动。
+    try:
+        await initialize_redis_client()
+    except Exception:
+        logger.exception("Redis连接初始化失败，服务退出")
+        raise
+
+    # 只读取 backend 已准备好的服务间 API 令牌，WebSocket 不负责数据库初始化。
+    try:
+        from common.utils.internal_token_service import load_internal_api_token
+        await load_internal_api_token(settings)
+    except Exception as e:
+        logger.error(f"内部 API 令牌加载失败: {e}")
+        raise
+
     cleanup_result = await fail_processing_risk_control_logs_on_restart()
     if not cleanup_result.success:
         logger.error(cleanup_result.message)
@@ -129,6 +145,12 @@ async def lifespan(app: FastAPI):
     from common.services.order_service import close_goofish_connector
     await close_goofish_connector()
     logger.info("goofish API 连接池已关闭")
+
+    # 先释放Redis客户端，再断开全局连接池
+    try:
+        await close_redis_client()
+    except Exception:
+        logger.exception("关闭Redis连接失败")
 
 
 # 创建FastAPI应用
@@ -210,4 +232,6 @@ def run_server():
         port=settings.service_port,
         reload=False,
         log_level=settings.log_level.lower(),
+        # 保留公共日志工具配置，确保 Uvicorn 日志也进入普通日志和 error.log。
+        log_config=None,
     )
