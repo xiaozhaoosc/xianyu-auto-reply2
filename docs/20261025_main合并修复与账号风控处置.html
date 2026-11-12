@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2026-10-25 main 合并、启动修复与账号风控处置记录</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --text:#1f2937; --muted:#64748b;
+    --primary:#2563eb; --primary-soft:#e0ecff; --border:#e5e7eb;
+    --danger:#dc2626; --danger-soft:#fee2e2; --warn:#b45309; --warn-soft:#fef3c7;
+    --ok:#047857; --ok-soft:#d1fae5;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",Arial,sans-serif;
+    line-height:1.75;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 64px}
+  header.hero{background:linear-gradient(135deg,#1e3a8a,#2563eb 60%,#3b82f6);
+    color:#fff;border-radius:16px;padding:32px 34px;box-shadow:0 10px 30px rgba(37,99,235,.25)}
+  header.hero h1{margin:0 0 12px;font-size:27px;letter-spacing:.5px}
+  header.hero p{margin:4px 0;color:#dbeafe;font-size:14px}
+  .badges{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px}
+  .badge{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);
+    border-radius:999px;padding:4px 12px;font-size:12.5px}
+  section{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:24px 28px;margin-top:22px;box-shadow:0 2px 8px rgba(15,23,42,.04)}
+  h2{font-size:20px;margin:0 0 14px;padding-left:12px;border-left:4px solid var(--primary)}
+  h3{font-size:16.5px;margin:22px 0 10px;color:#1e3a8a}
+  p{margin:8px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9;font-weight:600;white-space:nowrap}
+  tr:nth-child(even) td{background:#fafbff}
+  code{background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;
+    padding:1px 5px;font-family:Consolas,"Courier New",monospace;font-size:13px;
+    word-break:break-all}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:16px 18px;
+    overflow:auto;font-size:12.8px;line-height:1.65;
+    font-family:Consolas,"Courier New",monospace}
+  pre code{background:none;border:0;color:inherit;padding:0}
+  .callout{border-radius:10px;padding:12px 16px;margin:14px 0;font-size:14px}
+  .callout.danger{background:var(--danger-soft);border-left:4px solid var(--danger);color:#7f1d1d}
+  .callout.warn{background:var(--warn-soft);border-left:4px solid var(--warn);color:#78350f}
+  .callout.ok{background:var(--ok-soft);border-left:4px solid var(--ok);color:#064e3b}
+  .callout.info{background:var(--primary-soft);border-left:4px solid var(--primary);color:#1e3a8a}
+  ul,ol{margin:10px 0;padding-left:24px}
+  li{margin:5px 0}
+  .check{list-style:none;padding-left:0}
+  .check li{padding-left:28px;position:relative}
+  .check li::before{content:"☐";position:absolute;left:4px;top:0;color:var(--primary);font-size:16px}
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;margin-top:6px}
+  .toc a{display:block;text-decoration:none;color:var(--primary);background:#f8faff;
+    border:1px solid #dbeafe;border-radius:8px;padding:8px 12px;font-size:13.5px}
+  .toc a:hover{background:var(--primary-soft)}
+  .meta{color:var(--muted);font-size:13px}
+  footer{margin-top:26px;text-align:center;color:var(--muted);font-size:12.5px}
+  @media print{
+    body{background:#fff;font-size:12px}
+    header.hero{box-shadow:none;border-radius:0;background:#1e3a8a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    section{box-shadow:none;border-radius:0;break-inside:avoid}
+    pre{background:#f1f5f9;color:#111827}
+    .toc{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>main 合并、启动修复与账号风控处置记录</h1>
+  <p>分支：dev_2609 ｜ 合并提交：fafacb5（父提交 9b68b72 + 990f701）</p>
+  <p>记录时间：2026-10-25 ｜ 远程：xiaozhao / xianyu-auto-reply2</p>
+  <div class="badges">
+    <span class="badge">冲突 12 文件 / 25 处</span>
+    <span class="badge">已推送 dev_2609</span>
+    <span class="badge">4 服务健康 200</span>
+    <span class="badge">账号 2221611389164 已禁用</span>
+    <span class="badge">风控冷却中</span>
+  </div>
+</header>
+
+<section>
+  <h2>目录</h2>
+  <div class="toc">
+    <a href="#summary">1. 结论摘要</a>
+    <a href="#merge">2. 分支合并修复</a>
+    <a href="#startup">3. 启动报错修复</a>
+    <a href="#risk">4. 账号风控事件与现状</a>
+    <a href="#cooldown">5. 风控冷却 SOP</a>
+    <a href="#prevent">6. 预防措施</a>
+    <a href="#rollback">7. 回滚方案</a>
+    <a href="#appendix">8. 附录与待办</a>
+  </div>
+</section>
+
+<section id="summary">
+  <h2>1. 结论摘要</h2>
+  <table>
+    <thead><tr><th>事项</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>分支合并</td><td>12 个冲突文件、25 处冲突全部解决；main 为基线，dev_2609 差异化能力已迁移</td></tr>
+      <tr><td>提交与推送</td><td>fafacb5 已提交，9b68b72..fafacb5 dev_2609 -&gt; dev_2609 推送成功</td></tr>
+      <tr><td>启动报错 1</td><td>DB_POOL_SIZE=10 不满足 &gt;=600 约束，三个 Python 服务启动即崩；已改为 800</td></tr>
+      <tr><td>启动报错 2</td><td>scheduler/websocket 抢跑导致“内部 API 令牌未初始化”；start_all.bat 已增加 backend 健康等待</td></tr>
+      <tr><td>服务验证</td><td>backend:8089、scheduler:8091、websocket:8090、frontend:9000 均返回 200</td></tr>
+      <tr><td>账号风控</td><td>账号 2221611389164 触发 FAIL_SYS_USER_VALIDATE，已手动禁用；保持冷却，禁止自动重试</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="merge">
+  <h2>2. 分支合并修复</h2>
+
+  <h3>2.1 合并基线</h3>
+  <table>
+    <thead><tr><th>项</th><th>值</th></tr></thead>
+    <tbody>
+      <tr><td>ours（当前分支）</td><td><code>dev_2609</code> @ <code>9b68b72</code>（60 个独有提交）</td></tr>
+      <tr><td>theirs（被合并分支）</td><td><code>main</code> @ <code>990f701</code>（46 个独有提交）</td></tr>
+      <tr><td>共同祖先</td><td><code>dba012b</code></td></tr>
+      <tr><td>合并提交</td><td><code>fafacb5</code> — Merge branch 'main' into dev_2609</td></tr>
+      <tr><td>推送远程</td><td><code>xiaozhao</code> = <code>git@github.com:xiaozhaoosc/xianyu-auto-reply2.git</code></td></tr>
+      <tr><td>推送结果</td><td><code>9b68b72..fafacb5  dev_2609 -&gt; dev_2609</code></td></tr>
+    </tbody>
+  </table>
+  <div class="callout info">合并原则：以 main 的结构与实现为基线，将 dev_2609 的新功能与差异化修改安全移植，不做无依据的重写。</div>
+
+  <h3>2.2 冲突文件与处理决策</h3>
+  <table>
+    <thead><tr><th>文件</th><th>冲突处</th><th>处理决策</th></tr></thead>
+    <tbody>
+      <tr><td><code>chat_new/im_client.py</code></td><td>整段（692 行 vs 0）</td><td>取 main 的 ImTokenMixin / ImTransportMixin 拆分；把 dev_2609 的推送看门狗与 chat:last_cid 缓存移植到 im_transport.py 的 _handle_push_message</td></tr>
+      <tr><td><code>chat_new/im_transport.py</code></td><td>新增</td><td>新增看门狗写入（watchdog:push_ts:*）与最近会话 cid 缓存（chat:last_cid:*，7 天）</td></tr>
+      <tr><td><code>amap_inputtips_service.py</code></td><td>1 处</td><td>保留 dev_2609 的独立 httpx 客户端（trust_env=False）。原因：该模块被 backend_web_loader 动态加载到 scheduler/websocket，main 的 app.core.http_client 在这些进程解析不一致会 ImportError</td></tr>
+      <tr><td><code>xianyu_item_payload_builder.py</code></td><td>2 处</td><td>保留分类校验（catId/channelCatId 必填，tbCatId 可为空，适配电子资料）；同时保留 main 的运费模板/按距离/固定运费/自提能力</td></tr>
+      <tr><td><code>common/db/init_database.py</code></td><td>2 处</td><td>并集：线索 5 表（52–56）+ AI 铺货 3 表（重排 57–59）；任务配置保留 auto_relist_scan 与 lead_comment_scan</td></tr>
+      <tr><td><code>captcha/orchestrator.py</code></td><td>1 处</td><td>并集：保留纯手动滑块模式参数/返回值，叠加内部接口鉴权头</td></tr>
+      <tr><td><code>item_service.py</code></td><td>2 处</td><td>并集：同时保留 detect_off_shelf（下架检测）与 fail_on_lock_error（自动续售锁失败可见）</td></tr>
+      <tr><td><code>scheduler/api/routes/internal.py</code></td><td>1 处</td><td>任务码白名单并集：增加 lead_comment_scan 与 auto_relist_scan</td></tr>
+      <tr><td><code>scheduled_task_service.py</code></td><td>2 处</td><td>常量与默认配置并集：migration_publish、lead_comment_scan、auto_relist_scan</td></tr>
+      <tr><td><code>scheduler_service.py</code></td><td>8 处</td><td>注册链并集：import、常量、handle、实例、create_task、停止取消、手动触发分支、三个 runner 循环</td></tr>
+      <tr><td><code>cookie_token_manager.py</code></td><td>2 处</td><td>取 main 的 _refresh_token_with_lock 与 _clear_refetch_state，保留 dev_2609 的“滑块失败保留旧 token 继续使用”告警语义</td></tr>
+      <tr><td><code>message_handler.py</code></td><td>2 处</td><td>并集：日志 1000 字符截断 + last_decrypt_ts 看门狗时间戳</td></tr>
+      <tr><td><code>xianyu_async.py</code></td><td>1 处</td><td>并集：先复用 Redis chat:last_cid（避免刷新 token + 断线重连制造僵尸连接），再按 main 的 Token/Session 错误分类决定是否重连</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.3 迁移后的关键能力</h3>
+  <ul>
+    <li>线索采集：lead_capture 路由/服务/模型、lead_comment_scan 定时任务、前端线索池页面。</li>
+    <li>商品迁移发布：migration 路由/服务/模型、migration_publish 定时任务、前端迁移页面。</li>
+    <li>在售状态与下架检测：live_status、detect_off_shelf，下架后详情探测细分（已删除/已卖出/已下架）。</li>
+    <li>断流看门狗与 pts 续传：message_watchdog.py、ws_sync_checkpoint.py。</li>
+    <li>滑块纯手动模式与人工等待通知；创建会话 cid 缓存复用。</li>
+    <li>来自 main：AI 铺货、商品自动续售、内部接口鉴权、Token 刷新锁、Redis 连接池、日志体系、IM 客户端拆分、运费/自提能力。</li>
+  </ul>
+
+  <h3>2.4 合并验证</h3>
+  <table>
+    <thead><tr><th>检查项</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>冲突标记扫描（12 个文件）</td><td>0 处</td></tr>
+      <tr><td>py_compile（12 个文件 + im_transport.py）</td><td>通过</td></tr>
+      <tr><td>common / backend-web / scheduler / websocket import 冒烟</td><td>全部通过</td></tr>
+      <tr><td>git diff --diff-filter=U</td><td>0 个未合并文件</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="startup">
+  <h2>3. 启动报错修复</h2>
+
+  <h3>3.1 故障 A：数据库连接池配置校验失败（致命）</h3>
+  <p>现象：backend-web / scheduler / websocket 启动即退出，控制台出现 Pydantic 校验错误。</p>
+  <pre><code>File ".../common/db/redis_client.py", line 25, in &lt;module&gt;
+    settings = get_settings()
+File ".../common/core/config.py", line 159, in get_settings
+    return BaseConfig()
+pydantic_core._pydantic_core.ValidationError: 1 validation error for BaseConfig
+db_pool_size
+  Input should be greater than or equal to 600 [input_value='10']</code></pre>
+  <p>根因：main 把连接池约束收紧为 <code>db_pool_size: int = Field(default=800, ge=600)</code>（common/core/config.py:53），<code>redis_pool_size</code> 同样要求 &gt;=600；本机三个 <code>.env</code> 仍为旧值 10，加载即失败。</p>
+  <table>
+    <thead><tr><th>文件</th><th>修改</th></tr></thead>
+    <tbody>
+      <tr><td><code>backend-web/.env</code></td><td>DB_POOL_SIZE: 10 → 800</td></tr>
+      <tr><td><code>scheduler/.env</code></td><td>DB_POOL_SIZE: 10 → 800</td></tr>
+      <tr><td><code>websocket/.env</code></td><td>DB_POOL_SIZE: 10 → 800</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <strong>注意：</strong>800 与各服务 .env.example 一致；连接池按需建连，不会启动即占满。三个 .env 是本地未跟踪文件，不会进入提交。换机器或重建环境时需按 .env.example 重新配置；如目标 MySQL 的 max_connections 较小，可下调但不得低于 600，且需满足“所有服务 DB_POOL_SIZE + DB_MAX_OVERFLOW 总和 &lt; max_connections”。
+  </div>
+
+  <h3>3.2 故障 B：服务间 API 令牌未初始化（首次/重建库）</h3>
+  <p>日志证据（scheduler/logs/error.log）：</p>
+  <pre><code>ERROR | _bootstrap:lifespan:90 - 内部 API 令牌加载失败: 服务间 API 令牌未初始化，请先启动 backend 完成数据库初始化
+RuntimeError: 服务间 API 令牌未初始化，请先启动 backend 完成数据库初始化
+ERROR | Application startup failed. Exiting.</code></pre>
+  <p>根因：INTERNAL_API_TOKEN 由 backend-web 启动时生成并写入数据库（common/utils/internal_token_service.py）。start_all.bat 原先同时拉起四个服务，scheduler/websocket 抢先启动时数据库尚无令牌，load_internal_api_token 抛 RuntimeError。</p>
+  <p>修复：在 start_all.bat 中启动 backend-web 后、启动 scheduler/websocket 前，增加最多 180 秒的 /health 等待。</p>
+  <pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "$ok=$false; for($i=0;$i -lt 90;$i++){ try { $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:8089/health'; if($r.StatusCode -eq 200){ $ok=$true; break } } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
+if errorlevel 1 echo WARNING: Backend-Web not ready in 180s; Scheduler/WebSocket may fail on internal token init.</code></pre>
+  <div class="callout info">本次 backend 已初始化令牌并持久化到数据库，后续并行启动不会再报该错；该等待主要保护“首次部署/重建数据库”场景。start_all.bat 为本地未跟踪脚本，不会进入合并提交。</div>
+
+  <h3>3.3 非致命日志（可忽略）</h3>
+  <table>
+    <thead><tr><th>日志</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>Integer display width is deprecated</td><td>MySQL 对 INT(11) 等显示宽度的弃用告警，来自建表语句，不影响运行</td></tr>
+      <tr><td>监听 :: 仅支持 IPv6，已自动回退到 0.0.0.0</td><td>Windows 本地预期回退，服务正常监听 IPv4</td></tr>
+      <tr><td>数据表创建完成，共 77 张表</td><td>正常初始化；线索 5 表与 AI 铺货 3 表均已创建</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.4 启动验证结果</h3>
+  <table>
+    <thead><tr><th>服务</th><th>验证方式</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>backend-web:8089</td><td>GET /health</td><td>200，database: connected，启动完成</td></tr>
+      <tr><td>scheduler:8091</td><td>GET /health</td><td>200，自动续售/补发货循环正常执行</td></tr>
+      <tr><td>websocket:8090</td><td>GET /health</td><td>200，心跳正常</td></tr>
+      <tr><td>frontend:9000</td><td>GET /</td><td>200，Vite 启动成功</td></tr>
+    </tbody>
+  </table>
+  <p class="meta">验证完成后已清理测试进程，8089/8090/8091/9000 无残留监听。</p>
+</section>
+
+<section id="risk">
+  <h2>4. 账号风控事件与当前状态</h2>
+
+  <h3>4.1 当前账号状态（数据库实查）</h3>
+  <table>
+    <thead><tr><th>account_id</th><th>status</th><th>disable_reason</th><th>updated_at</th></tr></thead>
+    <tbody>
+      <tr><td>2221611389164</td><td><strong>disabled</strong></td><td>手动禁用</td><td>2026-10-25 21:52:01</td></tr>
+      <tr><td>2222909890293</td><td>active</td><td>-</td><td>2026-10-25 21:53:13</td></tr>
+    </tbody>
+  </table>
+  <p>手动禁用走 cookies.py 的 _update_account_status_and_task，会同时：① 写入 status=disabled、disable_reason=手动禁用；② 调用 websocket 的 stop_account 停止该账号连接，避免继续心跳/刷新 Token。</p>
+
+  <h3>4.2 风控事件时间线</h3>
+  <table>
+    <thead><tr><th>时间</th><th>事件</th></tr></thead>
+    <tbody>
+      <tr><td>2026-10-25 18:09:25</td><td>slider_captcha 失败（xy_risk_control_logs id=20351）</td></tr>
+      <tr><td>2026-10-25 20:40:46</td><td>slider_captcha 失败（id=20354）</td></tr>
+      <tr><td>2026-10-25 21:00:27</td><td>Token 刷新返回 FAIL_SYS_USER_VALIDATE / RGV587_ERROR::SM::哎哟喂,被挤爆啦，带 punish 验证链接</td></tr>
+      <tr><td>2026-10-25 21:00:42</td><td>自动滑块第 1 次失败；进入人工等待模式（最长 300 秒）并发送飞书通知</td></tr>
+      <tr><td>2026-10-25 21:47:45</td><td>滑块流程取消（id=20357，人工接管/取消）</td></tr>
+      <tr><td>2026-10-25 21:49:34</td><td>slider_captcha 再次失败（id=20358）</td></tr>
+      <tr><td>2026-10-25 21:52:01</td><td>账号被手动禁用，连接停止</td></tr>
+    </tbody>
+  </table>
+  <div class="callout danger">
+    <strong>判断：</strong>4 小时内多次触发滑块（18:09 / 20:40 / 21:00 / 21:47 / 21:49），属于高频重试导致风控升级。自动滑块历史成功率偏低（attempt_1_default 近 12 次 0 成功），继续自动重试只会加重风险。
+  </div>
+
+  <h3>4.3 处置结论</h3>
+  <ul>
+    <li>账号 2221611389164 保持 disabled，冷却期内不得自动启动、不得刷新 Token、不得重试滑块。</li>
+    <li>另一账号 2222909890293 保持正常，可用于维持业务，但需确认其代理/IP 与被风控账号隔离。</li>
+    <li>禁用后未再产生新的 xy_risk_control_logs（最后一条为 21:49:34），停止连接的动作已生效。</li>
+  </ul>
+</section>
+
+<section id="cooldown">
+  <h2>5. 风控冷却 SOP（缓风控）</h2>
+
+  <h3>5.1 冷却期建议</h3>
+  <table>
+    <thead><tr><th>项目</th><th>建议</th></tr></thead>
+    <tbody>
+      <tr><td>冷却时长</td><td>至少 48 小时；若期间再次触发验证，从最后一次触发重新计时，并延长至 72 小时</td></tr>
+      <tr><td>冷却范围</td><td>该账号的所有登录、Token 刷新、Cookie 刷新、商品发布/编辑/擦亮、自动回复、补发货、补评价、监控/线索采集、自动续售、迁移发布</td></tr>
+      <tr><td>网络要求</td><td>冷却结束后优先使用独立 socks5 代理，不要与其他账号共用出口 IP</td></tr>
+      <tr><td>人工验证</td><td>仅允许人工在浏览器完成验证；不得用自动滑块连续重试</td></tr>
+    </tbody>
+  </table>
+
+  <h3>5.2 冷却期检查清单</h3>
+  <ul class="check">
+    <li>xy_accounts.status = disabled，disable_reason = 手动禁用（已确认）</li>
+    <li>websocket 已停止该账号连接（stop_account 已执行，日志无该账号心跳）</li>
+    <li>定时任务已跳过该账号：token_renewal、api_cookie_renew、cookies_refresh、fetch_items、redelivery、rate、polish、listing_monitor、lead_comment_scan、auto_relist_scan、migration_publish、dm_send</li>
+    <li>冷却期内 xy_risk_control_logs 无该账号新增记录</li>
+    <li>代理配置为独立 IP，未与其他账号共用</li>
+    <li>未对该账号执行任何自动滑块/自动登录脚本</li>
+  </ul>
+
+  <h3>5.3 冷却结束后的恢复步骤</h3>
+  <ol>
+    <li><strong>先查日志</strong>：确认最后一条风控日志距今 ≥ 48 小时，且期间无新增。</li>
+    <li><strong>确认网络</strong>：为账号配置独立 socks5 代理；proxy.enabled 已开启（账号级代理优先于系统代理）。</li>
+    <li><strong>人工验证优先</strong>：如需登录，使用有头浏览器由人工完成滑块；验证通过后再进入下一步。</li>
+    <li><strong>重新启用账号</strong>：在“账号管理”页面启用（status=active、清空 disable_reason），系统会调用 start_account 建立连接。</li>
+    <li><strong>观察 30 分钟</strong>：只观察心跳、会话与消息推送，不触发批量任务；确认无 FAIL_SYS_USER_VALIDATE。</li>
+    <li><strong>灰度恢复任务</strong>：先恢复自动回复，再逐项恢复定时任务；每项间隔 ≥ 30 分钟观察。</li>
+    <li><strong>再次触发风控</strong>：立即禁用，冷却时长翻倍（48h → 96h），并检查代理/IP、Cookie 是否被污染。</li>
+  </ol>
+
+  <h3>5.4 冷却期禁止动作</h3>
+  <ul>
+    <li>禁止通过脚本/接口反复调用 Token 刷新或滑块接口。</li>
+    <li>禁止删除/重建账号后立刻重登同一 IP。</li>
+    <li>禁止多个账号共用同一代理出口。</li>
+    <li>禁止在 failed_captcha 状态下自动重启账号连接（会形成“失败—重试—再失败”的风控升级循环）。</li>
+    <li>禁止使用相同滑块轨迹重复提交（同点位、同时长、同过冲会被霸屏系统识别）。</li>
+  </ul>
+
+  <h3>5.5 核对 SQL（只读）</h3>
+  <pre><code>-- 账号状态
+SELECT account_id, status, disable_reason, updated_at
+FROM xy_accounts
+WHERE account_id IN ('2221611389164', '2222909890293');
+
+-- 最近风控记录（确认冷却期无新增）
+SELECT id, account_identifier, event_type, processing_status, created_at
+FROM xy_risk_control_logs
+WHERE account_identifier = '2221611389164'
+ORDER BY id DESC
+LIMIT 10;
+
+-- 僵尸处理记录（仅长期 processing 时才需要处理）
+SELECT id, account_identifier, processing_status, created_at
+FROM xy_risk_control_logs
+WHERE processing_status = 'processing'
+ORDER BY id DESC;</code></pre>
+  <div class="callout warn">若确认存在僵尸 processing 记录，应先停止相关服务，再将其改为 failed 或 cancelled，避免新流程被旧记录阻塞。不要批量删除历史风控日志。</div>
+</section>
+
+<section id="prevent">
+  <h2>6. 预防措施</h2>
+  <table>
+    <thead><tr><th>措施</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>刷新间隔</td><td>TOKEN_REFRESH_INTERVAL=72000（20 小时），与 websocket/.env 保持一致</td></tr>
+      <tr><td>指数退避</td><td>Token 刷新失败按 10min → 20min → 40min → 60min 退避，成功即重置</td></tr>
+      <tr><td>风控共享冷却</td><td>风控退避状态写入 Redis，全局共享，所有入口统一遵守</td></tr>
+      <tr><td>滑块策略</td><td>保留差异化轨迹（default/cautious/fast/slow），避免固定轨迹；鼠标 movementX/movementY 需真实递增</td></tr>
+      <tr><td>浏览器指纹</td><td>PC Chrome 使用普通鼠标模式，不使用 has_touch=True；Linux Docker 用 Xvfb + headful</td></tr>
+      <tr><td>并发限制</td><td>MAX_CAPTCHA_CONCURRENT=3，避免排队超时与集中触发</td></tr>
+      <tr><td>代理策略</td><td>账号级 socks5 优先；一账号一出口；系统代理仅用于一次性短任务</td></tr>
+      <tr><td>自动重连</td><td>failed_captcha 时不自动重启账号实例，等待冷却结束</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="rollback">
+  <h2>7. 回滚方案</h2>
+  <h3>7.1 代码回滚（谨慎）</h3>
+  <pre><code># 查看合并提交
+git log -1 --oneline fafacb5
+
+# 方案 A：生成反向提交（推荐，保留历史）
+git revert -m 1 fafacb5
+
+# 方案 B：本地硬回退（仅在明确丢弃合并结果时使用）
+git reset --hard 9b68b72</code></pre>
+  <p>注意：fafacb5 是合并提交，revert -m 1 表示以第一父提交（dev_2609）为主线回退。回退后需重新推送，远端 dev_2609 会新增一个回退提交。</p>
+
+  <h3>7.2 配置回滚</h3>
+  <ul>
+    <li>DB_POOL_SIZE 不建议回退到 10（会再次触发校验失败）；如确需调整，保持 &gt;=600。</li>
+    <li>start_all.bat 的健康等待可删除，但首次部署时 scheduler/websocket 可能再次因令牌未初始化而退出。</li>
+  </ul>
+
+  <h3>7.3 账号回滚</h3>
+  <p>账号恢复不是“回滚”，而是按 5.3 节流程重新启用；冷却不足时不要启用。</p>
+</section>
+
+<section id="appendix">
+  <h2>8. 附录与待办</h2>
+
+  <h3>8.1 关键文件与位置</h3>
+  <table>
+    <thead><tr><th>类型</th><th>路径</th></tr></thead>
+    <tbody>
+      <tr><td>合并冲突文件</td><td>backend-web/app/services/{amap_inputtips_service.py,xianyu_item_payload_builder.py,chat_new/im_client.py,chat_new/im_transport.py}、common/db/init_database.py、common/services/{captcha/orchestrator.py,item_service.py}、scheduler/app/{api/routes/internal.py,services/scheduled_task_service.py,services/scheduler_service.py}、websocket/app/services/xianyu/{cookie_token_manager.py,message_handler.py,xianyu_async.py}</td></tr>
+      <tr><td>连接池约束</td><td>common/core/config.py:53</td></tr>
+      <tr><td>内部令牌加载</td><td>common/utils/internal_token_service.py、scheduler/_bootstrap.py:88、websocket/_bootstrap.py</td></tr>
+      <tr><td>账号启停</td><td>backend-web/app/api/routes/cookies.py:419（_update_account_status_and_task）</td></tr>
+      <tr><td>账号状态枚举</td><td>common/utils/account_status.py（inactive/disabled/suspended/deleted 视为不可用）</td></tr>
+      <tr><td>启动脚本</td><td>start_all.bat</td></tr>
+      <tr><td>本地环境配置</td><td>backend-web/.env、scheduler/.env、websocket/.env（未跟踪）</td></tr>
+    </tbody>
+  </table>
+
+  <h3>8.2 日志路径</h3>
+  <table>
+    <thead><tr><th>服务</th><th>日志</th></tr></thead>
+    <tbody>
+      <tr><td>backend-web</td><td>backend-web/logs/backend-web.log、backend-web/logs/error.log</td></tr>
+      <tr><td>scheduler</td><td>scheduler/logs/scheduler.log、scheduler/logs/error.log</td></tr>
+      <tr><td>websocket</td><td>websocket/logs/websocket.log、websocket/logs/error.log</td></tr>
+    </tbody>
+  </table>
+
+  <h3>8.3 验证命令</h3>
+  <pre><code># 健康检查
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8089/health
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8091/health
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8090/health
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:9000
+
+# 冲突标记检查
+Select-String -Path &lt;files&gt; -Pattern '^(<<<<<<<|=======|>>>>>>>)'
+
+# 语法检查
+.\.venv\Scripts\python.exe -m py_compile &lt;files&gt;
+
+# 远程确认
+git ls-remote --heads xiaozhao dev_2609</code></pre>
+
+  <h3>8.4 本次未纳入版本库的内容</h3>
+  <ul>
+    <li>本地环境文件：backend-web/.env、scheduler/.env、websocket/.env、promotion/backend/.env</li>
+    <li>本地脚本：start_all.bat、stop_all.bat、restart_all.bat</li>
+    <li>其他：账号导出_2026-07-30.xlsx、last30days-skill-main/、mvanhorn-printing-press-library-0.1.16.tgz、common/services/item_polish_service.py、common/services/risk_guard.py</li>
+  </ul>
+  <div class="callout warn">以上内容按约定未提交；如需纳入版本库，请先确认不包含真实凭据与业务导出数据。</div>
+
+  <h3>8.5 后续待办</h3>
+  <table>
+    <thead><tr><th>优先级</th><th>事项</th><th>负责人</th></tr></thead>
+    <tbody>
+      <tr><td>高</td><td>账号 2221611389164 冷却 ≥48h，期间监控 xy_risk_control_logs 无新增</td><td>运维</td></tr>
+      <tr><td>高</td><td>恢复前确认独立 socks5 代理与出口 IP</td><td>运维</td></tr>
+      <tr><td>中</td><td>恢复后按 5.3 灰度启用，观察 Token 刷新与滑块命中率</td><td>开发/运维</td></tr>
+      <tr><td>中</td><td>补充 start_all.bat 的失败提示（backend 未就绪时给出明确指引）</td><td>开发</td></tr>
+      <tr><td>低</td><td>评估 DB_POOL_SIZE 与目标 MySQL max_connections 的匹配关系</td><td>运维</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  文档生成于 2026-10-25 ｜ 对应提交 fafacb5 ｜ 内部运维文档，请勿外传
+</footer>
+</div>
+</body>
+</html>

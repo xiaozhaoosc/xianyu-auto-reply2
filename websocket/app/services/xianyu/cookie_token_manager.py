@@ -43,6 +43,8 @@ from common.services.token_request_lock import (
 from common.services.captcha.concurrency import run_browser_task
 from common.services.captcha.slider_mode import (
     SLIDER_MODE_REAL_MOUSE,
+    load_manual_wait_seconds,
+    load_slider_notify_config,
     refresh_slider_mode_from_database,
 )
 from common.services.captcha.token_refetch import request_fresh_captcha_url
@@ -390,7 +392,7 @@ class CookieTokenManager:
                         STARTUP_EXPIRED_CACHE_REFRESH_JITTER_SECONDS,
                     )
                     token_manager.last_cookie_refresh_time = time.time() + refresh_jitter
-                    refresh_delay = token_manager.cookie_refresh_interval + refresh_jitter
+                    refresh_delay = token_manager._effective_cookie_interval() + refresh_jitter
                     logger.warning(
                         f"【{self.cookie_id}】启动阶段使用过期Token缓存连接，"
                         f"将在约{refresh_delay:.0f}秒后自动刷新Token"
@@ -693,10 +695,11 @@ class CookieTokenManager:
                     return None
                 try:
                     from common.db.compat import db_manager
+                    from common.services.captcha.trigger_context import peek_trigger_source
                     log_id = db_manager.add_risk_control_log(
                         cookie_id=self.cookie_id,
                         event_type='slider_captcha',
-                        event_description=f'触发场景: Token刷新, URL: {verification_url}',
+                        event_description=f'触发场景: {peek_trigger_source(self.cookie_id)}, URL: {verification_url}',
                         processing_status='processing'
                     )
                     if log_id:
@@ -761,6 +764,8 @@ class CookieTokenManager:
                     self.cookies_str, self._request_captcha_url_sync, remote_config,
                 )
                 selected_slider_mode = await refresh_slider_mode_from_database()
+                manual_wait_seconds = await load_manual_wait_seconds()
+                smtp_config, notify_email = await load_slider_notify_config()
                 if (
                     remote_config is None
                     and selected_slider_mode == SLIDER_MODE_REAL_MOUSE
@@ -772,12 +777,18 @@ class CookieTokenManager:
                         *slider_args,
                         weight_class="local",
                         slider_mode=selected_slider_mode,
+                        manual_wait_seconds=manual_wait_seconds,
+                        smtp_config=smtp_config,
+                        notify_email=notify_email,
                     )
                 else:
                     success, cookies, captcha_engine = await run_browser_task(
                         run_slider_verification_with_fallback,
                         *slider_args,
                         slider_mode=selected_slider_mode,
+                        manual_wait_seconds=manual_wait_seconds,
+                        smtp_config=smtp_config,
+                        notify_email=notify_email,
                     )
 
                 # 重取验证链接的 Token 请求可能在任意结果分支下发新 Cookie（尤其是
@@ -1408,21 +1419,19 @@ class CookieTokenManager:
                         return await self._refresh_token_with_lock(
                             captcha_retry_count=captcha_retry_count + 1
                         )
-                    logger.error(f"【{self.cookie_id}】滑块验证失败")
+                    logger.warning(f"【{self.cookie_id}】滑块验证失败，保留原有token继续使用")
                     self._clear_refetch_state()
                     notification_sent = True
                     self.last_token_refresh_status = "failed_captcha"
-                    self.current_token = None
-                    await self._delete_cached_token()
-                    return None
+                    # 验证失败时保留原有token，不清除，让账号继续使用旧token
+                    return self.current_token
                 except Exception as captcha_e:
-                    logger.error(f"【{self.cookie_id}】滑块验证处理异常: {self._safe_str(captcha_e)}")
+                    logger.warning(f"【{self.cookie_id}】滑块验证处理异常: {self._safe_str(captcha_e)}，保留原有token继续使用")
                     self._clear_refetch_state()
                     notification_sent = True
                     self.last_token_refresh_status = "failed_captcha_exception"
-                    self.current_token = None
-                    await self._delete_cached_token()
-                    return None
+                    # 异常时也保留原有token
+                    return self.current_token
 
             # FAIL_SYS_TOKEN_EXOIRED/EXPIRED：允许自动重试一次
             try:

@@ -1,0 +1,17 @@
+[Unit]
+Description=闲鱼店铺数据 → 飞书多维表格同步（方案3：反转数据流，绕过云文档小组件 CSP 白名单限制）
+Documentation=https://open.feishu.cn/document/client-docs/docs-add-on/cloud-doc-block-security-configuration
+After=network-online.target
+
+[Service]
+Type=oneshot
+# 仓库内为唯一副本，避免 ~/.hermes/scripts 与仓库两份代码漂移
+ExecStart=/usr/bin/python3 /home/ken4zhao/Documents/online/xianyu-auto-reply2/xianyu-auto-reply/deploy/base-sync/xianyu_dashboard_to_base.py
+# lark-cli 凭据在 $HOME 下，systemd --user 默认已带正确 HOME，这里显式声明防环境分叉
+Environment=HOME=/home/ken4zhao
+# lark-cli 装在 nvm node24 下，systemd 无 nvm PATH；脚本内有绝对路径兜底，这里再补一层
+Environment=PATH=/home/ken4zhao/.nvm/versions/node/v24.16.0/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=180
+# 脚本成功时静默无输出，失败时 stderr 一行原因 → journalctl 可查
+StandardOutput=journal
+StandardError=journal

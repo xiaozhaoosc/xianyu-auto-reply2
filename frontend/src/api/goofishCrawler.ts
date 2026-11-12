@@ -87,3 +87,49 @@ export const listGoofishCrawlItems = async (
 export const deleteGoofishCrawlJob = async (jobId: number): Promise<{ success: boolean }> => {
   return del(`${PREFIX}/jobs/${jobId}`)
 }
+
+export interface ImportToMaterialRequest {
+  item_ids?: string[]
+  min_want_count?: number
+  min_view_count?: number
+}
+
+export const importCrawlItemsToMaterials = async (
+  jobId: number,
+  payload?: ImportToMaterialRequest,
+): Promise<{ success: boolean; message?: string; data?: { imported: number; skipped: number; total: number } }> => {
+  return post(`${PREFIX}/jobs/${jobId}/import-materials`, payload || {})
+}
+
+export interface FetchByIdRequest {
+  item_ids: string[]
+  cookie_id: string
+}
+
+export const fetchItemsById = async (
+  payload: FetchByIdRequest,
+): Promise<{
+  success: boolean
+  message?: string
+  data?: { items: GoofishCrawlItem[]; errors: { item_id: string; error: string }[]; success_count: number; error_count: number }
+}> => {
+  return post(`${PREFIX}/fetch-by-id`, payload)
+}
+
+export interface FetchBySellerRequest {
+  user_ids: string[]
+  cookie_id: string
+  min_want_count?: number
+  min_view_count?: number
+  max_pages?: number
+}
+
+export const fetchItemsBySeller = async (
+  payload: FetchBySellerRequest,
+): Promise<{
+  success: boolean
+  message?: string
+  data?: { items: GoofishCrawlItem[]; errors: { user_id: string; error: string }[]; success_count: number; error_count: number }
+}> => {
+  return post(`${PREFIX}/fetch-by-seller`, payload)
+}

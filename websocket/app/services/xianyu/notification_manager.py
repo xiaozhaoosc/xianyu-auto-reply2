@@ -71,6 +71,12 @@ class NotificationManager:
                 logger.warning(f"📱 系统消息不发送通知: {send_message}")
                 return
 
+            # 过滤评价提醒类系统消息（子串匹配，覆盖~和～等变体）
+            rate_notice_keywords = ['快给ta一个评价吧', '我完成了评价']
+            if any(kw in send_message for kw in rate_notice_keywords):
+                logger.info(f"📱 评价提醒消息不发送通知: {send_message}")
+                return
+
             # 检查消息过滤规则（跳过消息通知）
             try:
                 filter_keywords = db_manager.get_message_filter_keywords(self.cookie_id, 'skip_notify')
@@ -315,6 +321,7 @@ class NotificationManager:
                 "face_verification_timeout": "⚠️ 人脸验证超时",
                 "account_disabled": "⚠️ 账号已自动禁用",
                 "baxia_punish_captcha": "⚠️ 触发风控图形验证",
+                "message_watchdog_restart": "🐕 消息断流自动重启",
             }
             
             # 获取通知标题
@@ -369,7 +376,7 @@ class NotificationManager:
             logger.error(f"处理Token刷新通知失败: {self._safe_str(e)}")
 
     def _is_normal_token_expiry(self, error_message: str) -> bool:
-        """检查是否是正常的令牌过期"""
+        """检查是否是正常的令牌过期（受 notify.token_expiry_notify 开关控制）"""
         no_notification_keywords = [
             'FAIL_SYS_TOKEN_EXOIRED::令牌过期',
             'FAIL_SYS_TOKEN_EXPIRED::令牌过期',
@@ -386,10 +393,25 @@ class NotificationManager:
             'Token定时刷新失败'
         ]
 
+        is_normal = False
         for keyword in no_notification_keywords:
             if keyword in error_message:
-                return True
-        return False
+                is_normal = True
+                break
+
+        if not is_normal:
+            return False
+
+        # 检查是否开启了 Token 正常过期通知
+        try:
+            from common.db.compat import db_manager
+            enabled = db_manager.get_system_setting("notify.token_expiry_notify", "false")
+            if str(enabled).lower() == "true":
+                return False  # 开关打开，不过滤，发送通知
+        except Exception:
+            pass
+
+        return True  # 默认过滤，不发送通知
 
     def _is_token_related_error(self, error_message: str) -> bool:
         """检查是否是Token相关的错误"""

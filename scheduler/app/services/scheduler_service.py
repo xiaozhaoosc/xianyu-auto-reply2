@@ -40,6 +40,8 @@ from app.services.scheduler.seller_fill_task import seller_fill_task_service
 from app.services.scheduler.dm_send_task import dm_send_task_service
 from app.services.scheduler.auto_order_task import auto_order_task_service
 from app.services.scheduler.image_cleanup_task import image_cleanup_task_service
+from app.services.scheduler.migration_publish_task import MigrationPublishTask
+from app.services.scheduler.lead_comment_scan_task import lead_comment_scan_task_service
 from app.services.scheduler.auto_relist_task import auto_relist_task_service
 from app.services.scheduler.scheduled_publish_task import scheduled_publish_task_service
 from app.services.scheduled_task_service import (
@@ -67,6 +69,8 @@ from app.services.scheduled_task_service import (
     TASK_CODE_DM_SEND,
     TASK_CODE_AUTO_ORDER,
     TASK_CODE_IMAGE_CLEANUP,
+    TASK_CODE_MIGRATION_PUBLISH,
+    TASK_CODE_LEAD_COMMENT_SCAN,
     TASK_CODE_AUTO_RELIST,
     TASK_CODE_SCHEDULED_PUBLISH,
 )
@@ -103,6 +107,8 @@ class SchedulerService:
         self._dm_send_task_handle: Optional[asyncio.Task] = None
         self._auto_order_task_handle: Optional[asyncio.Task] = None
         self._image_cleanup_task_handle: Optional[asyncio.Task] = None
+        self._migration_publish_task_handle: Optional[asyncio.Task] = None
+        self._lead_comment_scan_task_handle: Optional[asyncio.Task] = None
         self._auto_relist_task_handle: Optional[asyncio.Task] = None
         self._scheduled_publish_task_handle: Optional[asyncio.Task] = None
         self._redelivery_task = RedeliveryTask()
@@ -128,6 +134,8 @@ class SchedulerService:
         self._dm_send_task = dm_send_task_service
         self._auto_order_task = auto_order_task_service
         self._image_cleanup_task = image_cleanup_task_service
+        self._migration_publish_task = MigrationPublishTask()
+        self._lead_comment_scan_task = lead_comment_scan_task_service
         self._auto_relist_task = auto_relist_task_service
         self._scheduled_publish_task = scheduled_publish_task_service
     
@@ -197,6 +205,8 @@ class SchedulerService:
         self._dm_send_task_handle = asyncio.create_task(self._run_dm_send_loop())
         self._auto_order_task_handle = asyncio.create_task(self._run_auto_order_loop())
         self._image_cleanup_task_handle = asyncio.create_task(self._run_image_cleanup_loop())
+        self._migration_publish_task_handle = asyncio.create_task(self._run_migration_publish_loop())
+        self._lead_comment_scan_task_handle = asyncio.create_task(self._run_lead_comment_scan_loop())
         self._auto_relist_task_handle = asyncio.create_task(self._run_auto_relist_loop())
         self._scheduled_publish_task_handle = asyncio.create_task(self._run_scheduled_publish_loop())
         logger.info("[定时任务调度] 已启动")
@@ -277,6 +287,12 @@ class SchedulerService:
         if self._image_cleanup_task_handle:
             self._image_cleanup_task_handle.cancel()
             self._image_cleanup_task_handle = None
+        if self._migration_publish_task_handle:
+            self._migration_publish_task_handle.cancel()
+            self._migration_publish_task_handle = None
+        if self._lead_comment_scan_task_handle:
+            self._lead_comment_scan_task_handle.cancel()
+            self._lead_comment_scan_task_handle = None
         if self._auto_relist_task_handle:
             self._auto_relist_task_handle.cancel()
             self._auto_relist_task_handle = None
@@ -324,7 +340,7 @@ class SchedulerService:
                     ),
                 },
                 TASK_CODE_RATE: {
-                    "config": rate_config or {"interval_seconds": 20, "enabled": True},
+                    "config": rate_config or {"interval_seconds": 7200, "enabled": True},
                     "task_running": (
                         self._rate_task_handle is not None 
                         and not self._rate_task_handle.done()
@@ -401,7 +417,7 @@ class SchedulerService:
                     ),
                 },
                 TASK_CODE_COOKIES_REFRESH: {
-                    "config": cookies_refresh_config or {"interval_seconds": 600, "enabled": True},
+                    "config": cookies_refresh_config or {"interval_seconds": 3600, "enabled": True},
                     "task_running": (
                         self._cookies_refresh_task_handle is not None
                         and not self._cookies_refresh_task_handle.done()
@@ -570,6 +586,9 @@ class SchedulerService:
         elif task_code == TASK_CODE_IMAGE_CLEANUP:
             logger.info("[定时任务调度] 手动触发图片清理任务")
             await self._image_cleanup_task.execute()
+        elif task_code == TASK_CODE_LEAD_COMMENT_SCAN:
+            logger.info("[定时任务调度] 手动触发线索评论扫描任务")
+            await self._lead_comment_scan_task.execute(force=True, trigger_type="manual")
         elif task_code == TASK_CODE_AUTO_RELIST:
             logger.info("[定时任务调度] [自动续售] 手动触发商品自动续售任务")
             try:
@@ -625,9 +644,9 @@ class SchedulerService:
         while self._running:
             config = ScheduledTaskService.get_cached_config(TASK_CODE_RATE)
             if not config:
-                config = {"interval_seconds": 20, "enabled": True}
+                config = {"interval_seconds": 7200, "enabled": True}
             
-            interval = config.get("interval_seconds", 20)
+            interval = config.get("interval_seconds", 7200)
             enabled = config.get("enabled", True)
             
             if enabled:
@@ -1337,6 +1356,74 @@ class SchedulerService:
                 break
 
         logger.info("[定时任务调度] 图片清理任务循环结束")
+
+    async def _run_migration_publish_loop(self) -> None:
+        """商品迁移发布任务执行循环（每分钟看一次，到点的批次发1个商品）"""
+        logger.info("[定时任务调度] 商品迁移发布任务循环开始")
+
+        # 初始加载配置
+        await self.reload_task_config(TASK_CODE_MIGRATION_PUBLISH)
+
+        while self._running:
+            config = ScheduledTaskService.get_cached_config(TASK_CODE_MIGRATION_PUBLISH)
+            if not config:
+                config = {"interval_seconds": 60, "enabled": True}
+
+            interval = config.get("interval_seconds", 60)
+            enabled = config.get("enabled", True)
+
+            if enabled:
+                try:
+                    result = await self._migration_publish_task.execute()
+                    if result and "无到点" not in result:
+                        logger.info(f"[定时任务调度] 迁移发布: {result}")
+                except asyncio.CancelledError:
+                    logger.info("[定时任务调度] 商品迁移发布任务被取消")
+                    break
+                except Exception as e:
+                    logger.error(f"[定时任务调度] 商品迁移发布任务执行异常: {e}")
+
+            # 等待下一次执行
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logger.info("[定时任务调度] 商品迁移发布任务等待被取消")
+                break
+
+        logger.info("[定时任务调度] 商品迁移发布任务循环结束")
+
+    async def _run_lead_comment_scan_loop(self) -> None:
+        """线索评论扫描任务执行循环（外层轮询到期检查，单任务有自身 interval_minutes 最低30分钟）"""
+        logger.info("[定时任务调度] 线索评论扫描任务循环开始")
+
+        # 初始加载配置
+        await self.reload_task_config(TASK_CODE_LEAD_COMMENT_SCAN)
+
+        while self._running:
+            config = ScheduledTaskService.get_cached_config(TASK_CODE_LEAD_COMMENT_SCAN)
+            if not config:
+                config = {"interval_seconds": 300, "enabled": True}
+
+            interval = config.get("interval_seconds", 300)
+            enabled = config.get("enabled", True)
+
+            if enabled:
+                try:
+                    await self._lead_comment_scan_task.execute()
+                except asyncio.CancelledError:
+                    logger.info("[定时任务调度] 线索评论扫描任务被取消")
+                    break
+                except Exception as e:
+                    logger.error(f"[定时任务调度] 线索评论扫描任务执行异常: {e}")
+
+            # 等待下一次执行
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logger.info("[定时任务调度] 线索评论扫描任务等待被取消")
+                break
+
+        logger.info("[定时任务调度] 线索评论扫描任务循环结束")
 
     async def _run_auto_relist_loop(self) -> None:
         """商品自动续售唯一 runner 循环。"""

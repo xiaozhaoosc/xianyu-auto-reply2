@@ -45,6 +45,12 @@ AUTH_FAILURE_COOLDOWN_SECONDS = int(os.getenv('AUTH_FAILURE_COOLDOWN_SECONDS', '
 # 自动发货被账号开关拦截时写入订单的说明，便于在订单管理中定位原因。
 AUTO_CONFIRM_DISABLED_REASON = "自动确认发货开关未开启，未执行自动发货，请手动发货"
 
+# 「创建会话失败 → 刷新token+强制重连」这一自愈路径的最小重连间隔（秒）。
+# 该路径会真正关闭 WebSocket 重连，且刷新 token 可能触发滑块/风控；短时间内并发或
+# 连环触发会互相踩踏（2026-09-10 事故：97 秒内两次重连，其中一次用未变化的旧 token
+# 重新 /reg，直接制造出僵尸连接）。故加单飞 + 冷却，冷却期内直接放弃，不做重连。
+FORCED_RECONNECT_COOLDOWN_S = int(os.getenv('FORCED_RECONNECT_COOLDOWN_S', '300'))
+
 DEFAULT_HEADERS = {
     'accept': 'application/json',
     'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
@@ -132,6 +138,7 @@ class XianyuAsync:
         self.token_refresh_task = None
         self.cleanup_task = None
         self.cookie_refresh_task = None
+        self.message_watchdog_task = None
         self.background_tasks = set()
         
         # 消息处理并发控制
@@ -178,6 +185,12 @@ class XianyuAsync:
         self.order_confirm_cooldown = 300  # 确认发货冷却时间（秒）
         self.yifan_account_lock = asyncio.Lock()  # 亦凡账号锁
         self.yifan_account_waiting = False  # 亦凡账号等待状态
+        # 强制重连（刷新token+断线重连）单飞锁与冷却计时：同一时刻只允许一次重连在跑，
+        # 避免并发调用（多条创建会话失败同时触发）互相踩踏出僵尸连接。
+        self._forced_reconnect_lock = asyncio.Lock()
+        self._last_forced_reconnect_ts = 0.0
+        # 当前已建立连接所用的 token（用于判断刷新后 token 是否真的变化）
+        self._connection_token: Optional[str] = None
         
         # 初始化自动发货处理器
         from app.services.xianyu.auto_delivery_handler import AutoDeliveryHandler
@@ -499,6 +512,14 @@ class XianyuAsync:
         """
         return await self._cookie_token_manager.refresh_token(captcha_retry_count)
     
+    def _mark_refresh_trigger_source(self, label: str):
+        """登记即将发起的Token刷新入口场景（供滑块人工告警标注触发场景用）"""
+        try:
+            from common.services.captcha.trigger_context import set_trigger_source
+            set_trigger_source(self.cookie_id, label)
+        except Exception:
+            pass
+
     async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh",
                                              chat_id: str = None, attachment_path: str = None, 
                                              verification_url: str = None):
@@ -582,12 +603,42 @@ class XianyuAsync:
         # 获取token
         if not self.current_token:
             logger.info(f"【{self.cookie_id}】获取初始token...")
+            self._mark_refresh_trigger_source("实例启动获取初始Token")
             await self.refresh_token()
         
         if not self.current_token:
             logger.warning(f"【{self.cookie_id}】无法获取有效token")
             raise Exception("Token获取失败")
         
+        # 重连续传：读取上一连接持久化的同步检查点（收帧侧把 pts 写进 Redis）。
+        # fail-open：读不到 / 超出续传窗口 / Redis 异常 → 维持原有"清零重来"，绝不阻断注册。
+        #
+        # 两档窗口（2026-09-10 定）：本进程已建过连（内存去重集合非空，重复帧会被
+        # processed_message_ids 拦住）→ 用宽窗口 RESUME_MAX_GAP_S，覆盖服务端约
+        # 1~3h 一个同步包的节奏；进程启动后的首次建连（去重集合为空）→ 用窄窗口
+        # RESUME_FIRST_GAP_S，避免服务端一次补推较长历史导致重复回复买家。
+        resume_state = None
+        try:
+            from app.services.xianyu.ws_sync_checkpoint import (
+                RESUME_FIRST_GAP_S,
+                RESUME_MAX_GAP_S,
+                build_resume_state,
+            )
+
+            gap_limit_s = (
+                RESUME_MAX_GAP_S if self._connection_token else RESUME_FIRST_GAP_S
+            )
+            resume_state = await build_resume_state(
+                self.cookie_id, gap_limit_s=gap_limit_s
+            )
+        except Exception as e:
+            logger.debug(f"【{self.cookie_id}】[sync-pts] 读取续传检查点失败(清零重来): {e}")
+
+        resume_sync = None
+        if resume_state and resume_state.get("use_sync_header"):
+            resume_sync = resume_state.get("sync")
+        sync_header = resume_sync or "0,0;0;0;"
+
         # 发送注册消息
         msg = {
             "lwp": "/reg",
@@ -598,16 +649,26 @@ class XianyuAsync:
                 "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "dt": "j",
                 "wv": "im:3,au:3,sy:6",
-                "sync": "0,0;0;0;",
+                "sync": sync_header,
                 "did": self.device_id,
                 "mid": generate_mid()
             }
         }
         await ws.send(json.dumps(msg))
+        if resume_sync:
+            logger.info(
+                f"【{self.cookie_id}】[sync-pts] /reg 携带续传检查点 sync={resume_sync}"
+                f"（断连 {resume_state['gap_s']}s）"
+            )
         await asyncio.sleep(1)
         
         # 发送同步状态消息
+        # 续传：ackDiff 的 pts/highPts 用检查点（语义="我读到这儿，之后的推给我"）；
+        # 无检查点则维持原行为（highPts=0, pts=now*1000，等价于"我已消费到此刻"）
         current_time = int(time.time() * 1000)
+        resume_ack_pts = (resume_state or {}).get("ack_pts")
+        ack_pts = resume_ack_pts or current_time * 1000
+        ack_high_pts = resume_ack_pts or 0
         msg = {
             "lwp": "/r/SyncStatus/ackDiff",
             "headers": {"mid": generate_mid()},
@@ -617,14 +678,18 @@ class XianyuAsync:
                     "tooLong2Tag": "PNM,1",
                     "channel": "sync",
                     "topic": "sync",
-                    "highPts": 0,
-                    "pts": current_time * 1000,
-                    "seq": 0,
+                    "highPts": ack_high_pts,
+                    "pts": ack_pts,
+                    "seq": (resume_state or {}).get("seq") or 0,
                     "timestamp": current_time
                 }
             ]
         }
         await ws.send(json.dumps(msg))
+        if resume_ack_pts:
+            logger.info(
+                f"【{self.cookie_id}】[sync-pts] ackDiff 续传 pts={ack_pts} highPts={ack_high_pts}"
+            )
         logger.info(f'【{self.cookie_id}】连接注册完成')
     
     def _create_tracked_task(self, coro):
@@ -2267,10 +2332,24 @@ class XianyuAsync:
             )
             return chat_id
 
-        # 只有明确的 Token/Session 失效才允许清缓存并重连。
+        # 取不到 cid（闲鱼常返回 {"headers":{...}, "code": 400} 无 body）：
+        # 可能是连接所用 token 已失效，也可能是重复创建/平台暂时性拒绝。
+        # 先尝试从 Redis 复用推送侧缓存的最新会话 cid（backend-web 收到买家消息时写入）：
+        # 命中缓存则说明会话确实存在，直接复用，避免触发「刷新token+断线重连」——
+        # 那会把连接搞成僵尸（重连后服务端不推业务帧，心跳却正常），是本功能最贵的代价。
+        resp_code = response.get("code") if isinstance(response, dict) else None
+        reused_cid = await self._try_reuse_cached_cid(to_user_id)
+        if reused_cid:
+            logger.warning(
+                f"【{self.cookie_id}】创建会话未获取到 cid（闲鱼返回 code={resp_code}），"
+                f"复用推送缓存会话 cid={reused_cid}（跳过刷新token+断线重连）: "
+                f"to_user_id={to_user_id}, item_id={item_id}"
+            )
+            return reused_cid
+
+        # 无缓存可用时，只有明确的 Token/Session 失效才允许清缓存并重连。
         # 业务错误（例如商品下架或会话参数无权限）与 Token 无关，直接失败，
         # 避免每条消息都删除缓存、刷新 Token 并关闭正常的 WebSocket。
-        resp_code = response.get("code") if isinstance(response, dict) else None
         create_error_code = self._extract_create_chat_error_code(response)
         if not self._is_token_or_session_expired_error(response):
             logger.error(
@@ -2441,25 +2520,54 @@ class XianyuAsync:
             raise
 
     async def _reconnect_with_new_token(self, timeout: float = 50.0) -> bool:
-        """先刷新 token，成功拿到新 token 后才强制断线重连，等待新连接就绪。
+        """强制重连入口：单飞锁 + 冷却，再执行「刷新 token → 断线重连」。
+
+        并发保护：多条创建会话失败会几乎同时调用本方法，并发重连会互相踩踏
+        （各自关闭/等待 ws，判断依据是被对方改写的连接对象）。2026-09-10 事故正是
+        97 秒内两次重连叠加，其中一次带着未变化的旧 token 重新 /reg，直接产生僵尸连接，
+        因此这里用单飞锁串行化。
+        冷却保护：冷却期内直接放弃，避免刷新 token 连环触发滑块/风控。
+        """
+        async with self._forced_reconnect_lock:
+            since = time.time() - self._last_forced_reconnect_ts
+            if since < FORCED_RECONNECT_COOLDOWN_S:
+                logger.warning(
+                    f"【{self.cookie_id}】距上次强制重连仅 {since:.0f}s"
+                    f"（冷却 {FORCED_RECONNECT_COOLDOWN_S}s），本次跳过重连，保留当前连接"
+                )
+                return False
+            ok = await self._reconnect_with_new_token_impl(timeout)
+            # 按「尝试」计时而非「成功」计时：刷新失败（滑块/风控）恰恰是最需要静默的场景，
+            # 若只在成功时置位冷却，失败时下一次创建会话又会立刻再刷新一次，反而连环触发风控。
+            self._last_forced_reconnect_ts = time.time()
+            return ok
+
+    async def _reconnect_with_new_token_impl(self, timeout: float = 50.0) -> bool:
+        """先刷新 token，**确认拿到不同的新 token** 后才强制断线重连，等待新连接就绪。
 
         token 只在建连的 /reg 头里使用一次，因此让新 token 生效必须带着它重新注册——
         即强制重连。做法：清掉缓存 token 与内存 token → 主动刷新一次 token：
         - 刷新失败（滑块/风控/网络等，拿不到新 token）：不关闭现有连接，直接返回 False，
           保住当前连接的实时消息接收，本次发货失败留给下轮重试，避免风控期白白断连。
-        - 刷新成功：关闭当前 ws，主连接循环自动重连；重连的 init() 见 current_token
-          已就绪（本方法已刷新）不再重复刷新，直接带「新」token 重新 /reg。
+        - 刷新"成功"但 token 与当前连接所用的一致（命中数据库缓存旧值 / 过期回退）：
+          同样不重连。⚠️ 这是僵尸连接的根因——用同一个 token 重复 /reg，服务端会接受
+          注册（心跳正常）但不再下发业务帧，连接从此"活着却收不到消息"。
+        - 刷新确实换到新 token：关闭当前 ws，主连接循环自动重连；重连的 init() 见
+          current_token 已就绪（本方法已刷新）不再重复刷新，直接带「新」token 重新 /reg。
 
         Args:
             timeout: 等待重连就绪的最长时间（秒）
         Returns:
-            刷新成功且重连就绪返回 True；无连接可关 / 刷新失败 / 超时未就绪返回 False
-            （由调用方决定是否重试）
+            拿到新 token 且重连就绪返回 True；无连接可关 / 刷新失败 / token 未变化 /
+            超时未就绪返回 False（由调用方决定是否重试）
         """
         old_ws = self.connection_manager.ws
         if old_ws is None:
             logger.warning(f"【{self.cookie_id}】当前无 WebSocket 连接，无法断线重连刷新 token")
             return False
+
+        # 记下当前连接建连 /reg 时使用的 token，用于判断本次刷新是否真的换了 token
+        connection_token = self._connection_token or self.current_token
 
         # 清空内存 token 并删除缓存，保证接下来 refresh_token() 拉取「新」token 且覆盖缓存
         self.current_token = None
@@ -2491,9 +2599,19 @@ class XianyuAsync:
                 f"并非新 token，放弃断线重连（保留当前连接），本次发货失败留待重试"
             )
             return False
-        # 刷新成功：清除「启动过期 token」标记，避免关连接后被 _reject_expired_startup_token 误清掉新 token
+        # 治本判据：token 没变就没有重连的必要。滑块失败回退旧 token、命中数据库缓存旧 token
+        # 等场景都会走到这里——若照旧关闭连接重连，就是拿同一 token 重复 /reg，服务端接受注册
+        # 却不再推业务帧（僵尸连接）。一律保留当前连接。
+        if connection_token and new_token == connection_token:
+            logger.error(
+                f"【{self.cookie_id}】刷新 token 未变化（状态: {refresh_status}，与当前连接为同一 token），"
+                f"主动放弃断线重连：同一 token 重复注册会导致服务端不再推送业务消息（僵尸连接）。"
+                f"保留当前连接，本次发货失败留待重试"
+            )
+            return False
+        # 刷新成功且 token 确实变化：清除「启动过期 token」标记，避免关连接后被 _reject_expired_startup_token 误清掉新 token
         self._using_expired_startup_token = False
-        logger.info(f"【{self.cookie_id}】token 刷新成功，准备关闭当前 ws 带新 token 重连")
+        logger.info(f"【{self.cookie_id}】token 刷新成功且已换新 token，准备关闭当前 ws 重连")
 
         # 关闭当前 ws，触发主连接循环退出 async with 并重连（不调 restart_instance：那会取消当前任务）
         try:
@@ -2517,6 +2635,81 @@ class XianyuAsync:
 
         logger.error(f"【{self.cookie_id}】等待断线重连就绪超时（{timeout}s），放弃本次重试")
         return False
+
+    async def _try_reuse_cached_cid(self, to_user_id: str) -> Optional[str]:
+        """创建会话失败时，尝试复用已知的会话 cid。
+
+        回填优先级：
+        1. Redis 推送缓存（backend-web chat_new 收到买家消息时写入，
+           key: chat:last_cid:<account_id>:<buyer_id>, 7天TTL）——实时、最快
+        2. DB xy_ai_chat_messages 历史会话（同一买家最近一次的 chat_id）——
+           覆盖前端未开聊天页、Redis 无缓存的场景
+
+        买家若与卖家有过消息往来，会话必然存在，直接复用 cid 即可完成发送，
+        无需重新 create，更不需要走「刷新token+断线重连」——那会把连接搞成僵尸。
+
+        Args:
+            to_user_id: 对方用户ID（买家ID，不带 @goofish 后缀）
+
+        Returns:
+            缓存的 cid（不带 @goofish 后缀）；无可用回填或异常返回 None（fail-open）
+        """
+        # 1) Redis 推送缓存
+        try:
+            from common.db.redis_client import get_redis_client
+            rc = await get_redis_client()
+            key = f"chat:last_cid:{self.cookie_id}:{to_user_id}"
+            raw = await rc.get(key)
+            if raw:
+                cid = str(raw)
+                cid = cid.split("@")[0] if "@" in cid else cid
+                if cid:
+                    return cid
+        except Exception as e:
+            logger.debug(
+                f"【{self.cookie_id}】读取会话cid缓存失败(不影响主流程): {self._safe_str(e)}"
+            )
+
+        # 2) DB xy_ai_chat_messages 历史会话回填
+        try:
+            row = await self._query_last_chat_id(to_user_id)
+            if row:
+                cid = row.split("@")[0] if "@" in row else row
+                if cid:
+                    logger.info(
+                        f"【{self.cookie_id}】复用DB历史会话 cid={cid} "
+                        f"(to_user_id={to_user_id})"
+                    )
+                    return cid
+        except Exception as e:
+            logger.debug(
+                f"【{self.cookie_id}】查询DB历史会话失败(不影响主流程): {self._safe_str(e)}"
+            )
+
+        return None
+
+    async def _query_last_chat_id(self, to_user_id: str) -> Optional[str]:
+        """从 xy_ai_chat_messages 查询该账号与该买家最近一次的 chat_id。
+
+        用项目原生 SQLAlchemy async session 查询，异常一律 fail-open 返回 None。
+        """
+        from sqlalchemy import select
+        from common.db.session import async_session_maker
+        from common.models.ai_chat_message import AIChatMessage
+
+        async with async_session_maker() as db_session:
+            stmt = (
+                select(AIChatMessage.chat_id)
+                .where(
+                    AIChatMessage.cookie_id == self.cookie_id,
+                    AIChatMessage.user_id == str(to_user_id),
+                )
+                .order_by(AIChatMessage.id.desc())
+                .limit(1)
+            )
+            result = await db_session.execute(stmt)
+            row = result.first()
+            return row[0] if row else None
 
     @staticmethod
     def _extract_cid_from_create_chat_response(response: dict) -> Optional[str]:
@@ -2866,6 +3059,9 @@ class XianyuAsync:
         
         if self.cookie_refresh_task and not self.cookie_refresh_task.done():
             tasks_to_cancel.append(('Cookie刷新', self.cookie_refresh_task))
+
+        if self.message_watchdog_task and not self.message_watchdog_task.done():
+            tasks_to_cancel.append(('消息断流看门狗', self.message_watchdog_task))
         
         if tasks_to_cancel:
             logger.info(f"【{self.cookie_id}】准备取消 {len(tasks_to_cancel)} 个后台任务...")
@@ -3001,6 +3197,7 @@ class XianyuAsync:
                     # 在WebSocket连接之前获取Token（确保Token有效）
                     if not self.current_token:
                         logger.info(f"【{self.cookie_id}】WebSocket连接前获取Token...")
+                        self._mark_refresh_trigger_source("WebSocket连接/重连前获取Token")
                         await self.refresh_token()
                         if not self.current_token:
                             # 根据 Token 刷新状态区分失败原因：
@@ -3037,8 +3234,8 @@ class XianyuAsync:
                                     f"（原因: {refresh_status or '未知'}，第{self._token_fetch_failures}次失败），等待重试..."
                                 )
 
-                                # 连续失败100次后禁用账号
-                                if self._token_fetch_failures >= 100:
+                                # 连续失败2次后禁用账号（避免频繁请求加强风控）
+                                if self._token_fetch_failures >= 2:
                                     logger.error(f"【{self.cookie_id}】Token获取连续失败{self._token_fetch_failures}次，禁用账号")
                                     try:
                                         from common.db.compat import db_manager
@@ -3054,8 +3251,8 @@ class XianyuAsync:
                             #   上次登录间隔 300 秒未到），每 5 秒重试无意义且会刷屏日志、
                             #   占用 token API 配额。
                             # - 本机滑块不处理且接口最终仍需滑块：等待 Cookie 刷新的 3 分钟轮询周期。
-                            # - 其他场景（滑块、网络故障、API 业务失败）：保持 5 秒快速重试，
-                            #   避免延误账号恢复。
+                            # - 其他场景（滑块、网络故障、API 业务失败）：等待6小时再重试，
+                            #   避免频繁请求加强风控导致账号封禁。
                             if refresh_status == 'skipped_cooldown':
                                 sleep_duration = 300
                             elif refresh_status in (
@@ -3065,9 +3262,10 @@ class XianyuAsync:
                                 'skipped_risk_control_check_failed',
                                 'skipped_startup_cache_lookup_failed',
                             ):
-                                sleep_duration = self.token_manager.cookie_refresh_interval
+                                # 与 Cookie 刷新主循环同一节奏：含退避阶梯（滑块失败后 1h→2h→3h）
+                                sleep_duration = self.token_manager._effective_cookie_interval()
                             else:
-                                sleep_duration = 5
+                                sleep_duration = 21600  # 6小时
                             await self._interruptible_sleep(sleep_duration)
                             continue
                     else:
@@ -3104,6 +3302,9 @@ class XianyuAsync:
                             self.connection_manager.network_failures = 0  # 成功连接后重置网络错误计数
                             self.connection_manager.last_successful_connection = time.time()
                             self._connection_start_time = time.time()  # 记录连接开始时间
+                            # 记录本次建连实际使用的 token：后续「强制重连」只在刷新拿到
+                            # 不同 token 时才执行，避免用同一个 token 重复 /reg 制造僵尸连接
+                            self._connection_token = self.current_token
                             
                             # 启动后台任务
                             logger.info(f"【{self.cookie_id}】启动后台任务...")
@@ -3145,6 +3346,16 @@ class XianyuAsync:
                                 )
                             else:
                                 logger.info(f"【{self.cookie_id}】Cookie刷新任务已在运行，跳过启动")
+
+                            # 启动消息断流看门狗（检测僵尸连接：推送有消息但本连接零业务帧）
+                            if not self.message_watchdog_task or self.message_watchdog_task.done():
+                                from app.services.xianyu.message_watchdog import MessageStreamWatchdog
+                                self._message_watchdog = MessageStreamWatchdog(self)
+                                self.message_watchdog_task = asyncio.create_task(
+                                    self._message_watchdog.run()
+                                )
+                            else:
+                                logger.info(f"【{self.cookie_id}】消息断流看门狗已在运行，跳过启动")
                             
                             logger.info(f"【{self.cookie_id}】所有后台任务已启动")
                             logger.info(f"【{self.cookie_id}】开始监听WebSocket消息...")

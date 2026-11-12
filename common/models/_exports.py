@@ -40,6 +40,7 @@ from common.models.db_backup_log import DbBackupLog
 from common.models.announcement import Announcement
 from common.models.confirm_receipt_message import ConfirmReceiptMessage
 from common.models.scheduled_task import ScheduledTask
+from common.models.migration import MigrationBatch, MigrationTask, MigrationCardMap
 from common.models.card_item_relation import CardItemRelation
 from common.models.recharge_order import RechargeOrder
 from common.models.dock_code_binding import DockCodeBinding
@@ -55,6 +56,13 @@ from common.models.listing_monitor_item import ListingMonitorItem
 from common.models.listing_monitor_log import ListingMonitorLog
 from common.models.collect_fallback_account import CollectFallbackAccount
 from common.models.order_fallback_account import OrderFallbackAccount
+from common.models.lead_capture import (
+    LeadCaptureTask,
+    LeadItem,
+    LeadComment,
+    LeadAction,
+    LeadScanLog,
+)
 from common.models.shared_scan_session import SharedScanSession
 from common.models.shared_scan_worker import SharedScanWorker
 from common.models.auto_reply_message_log import XYAutoReplyMessageLog
@@ -86,6 +94,9 @@ __all__ = [
     "XYApiKeywordRule",
     "XYOrder",
     "Card",
+    "MigrationBatch",
+    "MigrationTask",
+    "MigrationCardMap",
     "DefaultReply",
     "DefaultReplyRecord",
     "AIChatMessage",

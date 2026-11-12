@@ -7,7 +7,7 @@ Goofish 定时采集路由模块
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from loguru import logger
@@ -456,6 +456,324 @@ async def list_job_items(
     except Exception as e:
         logger.error(f"获取采集结果失败: {e}")
         return {"items": []}
+
+
+# ==================== 按卖家采集 ====================
+
+class FetchBySellerRequest(BaseModel):
+    """按卖家 userId 采集请求"""
+    user_ids: List[str] = Field(..., min_length=1, max_length=10, description="卖家 userId 列表，最多 10 个")
+    cookie_id: str = Field(..., description="用于采集的账号 ID")
+    min_want_count: int = Field(0, ge=0, description="最小想要人数筛选")
+    min_view_count: int = Field(0, ge=0, description="最小浏览量筛选")
+    max_pages: int = Field(5, ge=1, le=20, description="每个卖家最大翻页数")
+
+
+@router.post("/fetch-by-seller")
+async def fetch_by_seller(
+    payload: FetchBySellerRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """通过卖家 userId 采集其主页商品，支持想要人数/浏览量筛选"""
+    try:
+        from common.models.xy_account import XYAccount
+        account_stmt = select(XYAccount).where(XYAccount.account_id == payload.cookie_id)
+        account_result = await db.execute(account_stmt)
+        account = account_result.scalar_one_or_none()
+
+        if not account or not account.cookie:
+            return ApiResponse(success=False, message="账号 Cookie 不可用")
+
+        from app.services.compass.goofish_compass import GoofishCompassService, GoofishCompassConfig
+
+        config = GoofishCompassConfig(
+            headless=not account.show_browser,
+            navigation_timeout_ms=30000,
+            network_idle_timeout_ms=15000,
+        )
+
+        service = GoofishCompassService(
+            user_id=str(account.id),
+            cookie_value=account.cookie,
+            config=config,
+        )
+
+        all_items = []
+        all_errors = []
+
+        for uid in payload.user_ids:
+            result = await service.fetch_by_seller(
+                user_id=uid,
+                min_want_count=payload.min_want_count,
+                min_view_count=payload.min_view_count,
+                max_pages=payload.max_pages,
+            )
+            if result.get("error"):
+                all_errors.append({"user_id": uid, "error": result["error"]})
+            else:
+                all_items.extend(result.get("items", []))
+
+        return ApiResponse(
+            success=len(all_items) > 0,
+            message=f"采集完成：成功 {len(all_items)} 个商品，失败 {len(all_errors)} 个卖家",
+            data={
+                "items": all_items,
+                "errors": all_errors,
+                "success_count": len(all_items),
+                "error_count": len(all_errors),
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"按卖家采集异常: {e}")
+        return ApiResponse(success=False, message=f"采集失败: {str(e)}")
+
+
+# ==================== 采集结果导入素材库 ====================
+
+class ImportToMaterialsRequest(BaseModel):
+    """导入素材库请求"""
+    job_id: int = Field(..., description="采集任务 ID")
+    item_ids: List[str] = Field(default=[], description="指定导入的 item_id 列表，为空则导入全部")
+    min_want_count: int = Field(0, ge=0, description="最小想要人数筛选")
+    min_view_count: int = Field(0, ge=0, description="最小浏览量筛选")
+
+
+@router.post("/import-to-materials")
+async def import_to_materials(
+    payload: ImportToMaterialsRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """将采集结果导入素材库"""
+    try:
+        from common.models.product_material import ProductMaterial
+
+        # 查询采集结果
+        stmt = select(GoofishCrawlItem).where(GoofishCrawlItem.job_id == payload.job_id)
+        result = await db.execute(stmt)
+        items = result.scalars().all()
+
+        if not items:
+            return ApiResponse(success=False, message="没有找到采集结果")
+
+        # 筛选
+        filtered = []
+        for item in items:
+            if payload.item_ids and item.item_id not in payload.item_ids:
+                continue
+            if payload.min_want_count > 0 and (item.want_count or 0) < payload.min_want_count:
+                continue
+            if payload.min_view_count > 0 and (item.view_count or 0) < payload.min_view_count:
+                continue
+            filtered.append(item)
+
+        if not filtered:
+            return ApiResponse(success=False, message="筛选后没有符合条件的商品")
+
+        # 导入素材库
+        imported = 0
+        for item in filtered:
+            material = ProductMaterial(
+                user_id=current_user.id,
+                title=item.title or "",
+                description=item.description or "",
+                price=0,
+                images=[item.main_image] if item.main_image else [],
+                delivery_method="express",
+                postage=0,
+                address=item.area,
+                condition="全新",
+                remark=f"采集导入 | 想要{item.want_count or 0} | 浏览{item.view_count or 0}",
+            )
+            db.add(material)
+            imported += 1
+
+        await db.commit()
+        return ApiResponse(
+            success=True,
+            message=f"成功导入 {imported} 个商品到素材库",
+            data={"imported": imported, "total": len(filtered)},
+        )
+
+    except Exception as e:
+        logger.error(f"导入素材库失败: {e}")
+        return ApiResponse(success=False, message=f"导入失败: {str(e)}")
+
+
+# ==================== 按 ID 采集 ====================
+
+class FetchByIdRequest(BaseModel):
+    """按 item_id 采集请求"""
+    item_ids: List[str] = Field(..., min_length=1, max_length=20, description="item_id 列表，最多 20 个")
+    cookie_id: str = Field(..., description="用于采集的账号 ID")
+
+
+@router.post("/fetch-by-id")
+async def fetch_by_id(
+    payload: FetchByIdRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """通过 item_id 直接采集商品详情"""
+    try:
+        # 查询账号 Cookie
+        from common.models.xy_account import XYAccount
+        account_stmt = select(XYAccount).where(XYAccount.account_id == payload.cookie_id)
+        account_result = await db.execute(account_stmt)
+        account = account_result.scalar_one_or_none()
+
+        if not account or not account.cookie:
+            return ApiResponse(success=False, message="账号 Cookie 不可用")
+
+        from app.services.compass.goofish_compass import GoofishCompassService, GoofishCompassConfig
+
+        config = GoofishCompassConfig(
+            headless=not account.show_browser,
+            navigation_timeout_ms=30000,
+            network_idle_timeout_ms=15000,
+            detail_response_timeout_ms=7000,
+        )
+
+        service = GoofishCompassService(
+            user_id=str(account.id),
+            cookie_value=account.cookie,
+            config=config,
+        )
+
+        results = []
+        errors = []
+
+        for item_id in payload.item_ids:
+            result = await service.fetch_by_item_id(item_id)
+            if result.get("error"):
+                errors.append({"item_id": item_id, "error": result["error"]})
+            else:
+                items = result.get("items", [])
+                results.extend(items)
+
+        return ApiResponse(
+            success=len(results) > 0,
+            message=f"采集完成：成功 {len(results)} 个，失败 {len(errors)} 个",
+            data={
+                "items": results,
+                "errors": errors,
+                "success_count": len(results),
+                "error_count": len(errors),
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"按ID采集异常: {e}")
+        return ApiResponse(success=False, message=f"采集失败: {str(e)}")
+
+
+# ==================== 采集结果导入素材库 ====================
+
+class ImportToMaterialRequest(BaseModel):
+    """采集结果导入素材库请求"""
+    item_ids: Optional[List[str]] = Field(None, description="指定导入的 item_id 列表，为空则导入全部")
+    min_want_count: int = Field(0, ge=0, description="最小想要人数筛选")
+    min_view_count: int = Field(0, ge=0, description="最小浏览量筛选")
+
+
+@router.post("/jobs/{job_id}/import-materials")
+async def import_to_materials(
+    job_id: int,
+    payload: ImportToMaterialRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """将采集结果导入素材库，支持按想要人数/浏览量筛选"""
+    try:
+        # 验证任务归属
+        job_stmt = select(GoofishCrawlJob).where(
+            GoofishCrawlJob.id == job_id,
+            GoofishCrawlJob.owner_id == current_user.id,
+        )
+        job_result = await db.execute(job_stmt)
+        job = job_result.scalar_one_or_none()
+        if not job:
+            return ApiResponse(success=False, message="任务不存在")
+
+        # 查询采集结果
+        conditions = [GoofishCrawlItem.job_id == job_id]
+        if payload.item_ids:
+            conditions.append(GoofishCrawlItem.item_id.in_(payload.item_ids))
+        if payload.min_want_count > 0:
+            conditions.append(GoofishCrawlItem.want_count >= payload.min_want_count)
+        if payload.min_view_count > 0:
+            conditions.append(GoofishCrawlItem.view_count >= payload.min_view_count)
+
+        items_stmt = select(GoofishCrawlItem).where(*conditions)
+        items_result = await db.execute(items_stmt)
+        crawl_items = items_result.scalars().all()
+
+        if not crawl_items:
+            return ApiResponse(success=False, message="没有符合条件的采集结果")
+
+        # 导入素材库
+        from common.models.product_material import ProductMaterial
+        imported = 0
+        skipped = 0
+
+        for ci in crawl_items:
+            if not ci.title:
+                skipped += 1
+                continue
+
+            # 检查是否已导入（按标题去重）
+            dup_stmt = select(ProductMaterial).where(
+                ProductMaterial.user_id == current_user.id,
+                ProductMaterial.title == ci.title,
+            )
+            dup_result = await db.execute(dup_stmt)
+            if dup_result.scalar_one_or_none():
+                skipped += 1
+                continue
+
+            # 解析价格
+            price = 0.0
+            if ci.price:
+                try:
+                    price = float(ci.price.replace("￥", "").replace("¥", "").strip())
+                except (ValueError, TypeError):
+                    price = 0.0
+
+            # 构建图片列表
+            images = []
+            if ci.main_image:
+                images.append(ci.main_image)
+
+            material = ProductMaterial(
+                user_id=current_user.id,
+                title=ci.title,
+                description=ci.description or "",
+                price=price if price > 0 else 0.01,
+                images=images,
+                delivery_method="express",
+                postage=0,
+                address=ci.area,
+                condition="全新",
+                remark=f"[采集导入] item_id={ci.item_id}, 想要{ci.want_count or 0}, 浏览{ci.view_count or 0}",
+            )
+            db.add(material)
+            imported += 1
+
+        await db.commit()
+
+        logger.info(f"采集结果导入素材库: job_id={job_id}, imported={imported}, skipped={skipped}")
+        return ApiResponse(
+            success=True,
+            message=f"导入完成：成功 {imported} 条，跳过 {skipped} 条（标题重复或为空）",
+            data={"imported": imported, "skipped": skipped, "total": len(crawl_items)},
+        )
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"导入素材库失败: {e}")
+        return ApiResponse(success=False, message=f"导入失败: {str(e)}")
 
 
 # ==================== 删除任务 ====================

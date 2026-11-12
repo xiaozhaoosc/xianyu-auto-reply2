@@ -296,7 +296,22 @@ class DatabaseInitializer:
         (
             "captcha.slider_mode",
             "browser",
-            "滑块滑动方式：browser/real_mouse",
+            "滑块滑动方式：browser-自动滑动/real_mouse-真实鼠标(仅Windows)/manual-纯手动(跳过自动，等待人工)",
+        ),
+        (
+            "captcha.manual_wait_seconds",
+            "300",
+            "自动滑动失败后等待人工完成验证的秒数（0=不等待，直接失败）。默认300秒(5分钟)，避免人工来不及响应",
+        ),
+        (
+            "captcha.slider_notify_email",
+            "",
+            "滑块需要人工操作时的通知邮箱（留空=不通知）",
+        ),
+        (
+            "notify.token_expiry_notify",
+            "false",
+            "Token正常过期是否发送通知（true=发送，false=不发送）",
         ),
         (
             "token.api_mode",
@@ -348,9 +363,16 @@ class DatabaseInitializer:
         (
             "rate",
             "补评价任务",
-            20,
+            7200,
             True,
             "定时补评价任务",
+        ),
+        (
+            "migration_publish",
+            "商品迁移发布任务",
+            60,
+            True,
+            "按批次随机间隔(3~10分钟)逐个发布迁移商品",
         ),
         (
             "polish",
@@ -418,9 +440,9 @@ class DatabaseInitializer:
         (
             "token_renewal",
             "Token续期任务",
-            20,
+            10800,
             True,
-            "定时为未来1小时内到期的启用账号预取IM Token，并写入续期到期日",
+            "定时为未来1小时内到期的启用账号预取IM Token（3h，与Cookie刷新链路对齐，降低风控挑战频率）",
         ),
         (
             "cookies_refresh",
@@ -432,9 +454,9 @@ class DatabaseInitializer:
         (
             "api_cookie_renew",
             "接口续期Cookies任务",
-            3600,
+            10800,
             True,
-            "定时通过 hasLogin.do 接口为启用账号续期Cookies并同步Set-Cookie",
+            "定时通过 hasLogin.do 接口为启用账号续期Cookies并同步Set-Cookie（3h，与Cookie刷新链路对齐，降低风控挑战频率）",
         ),
         (
             "close_notice",
@@ -512,6 +534,13 @@ class DatabaseInitializer:
             60,
             True,
             "每分钟扫描启用的定时发布规则，并按账号随机发布未成功发布过的素材",
+        ),
+        (
+            "lead_comment_scan",
+            "线索评论扫描任务",
+            300,
+            True,
+            "定时扫描线索采集任务的候选商品评论区（只读），高意向评论入库形成线索池；单任务间隔最低30分钟，全局详情请求日上限50次，触发风控立即终止",
         ),
     )
     
@@ -648,6 +677,8 @@ class DatabaseInitializer:
                 price VARCHAR(32) COMMENT '商品价格',
                 ai_prompt TEXT COMMENT '商品AI提示词',
                 is_polished TINYINT(1) DEFAULT 0 COMMENT '是否擦亮',
+                live_status VARCHAR(16) NOT NULL DEFAULT 'on_sale' COMMENT '平台在售状态：on_sale-在售/off_shelf-已下架/sold_out-已卖出/deleted-已删除',
+                off_shelf_at DATETIME DEFAULT NULL COMMENT '确认不在售时间',
                 metadata JSON COMMENT '商品元数据',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -1301,6 +1332,64 @@ class DatabaseInitializer:
                 INDEX idx_cir_user_item (user_id, item_id),
                 UNIQUE KEY uk_card_item_dock (card_id, item_id, dock_record_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='卡券商品关联表';
+        """,
+
+        "xy_migration_batches": """
+            CREATE TABLE IF NOT EXISTS xy_migration_batches (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '批次ID',
+                owner_id BIGINT NOT NULL COMMENT '所属用户ID',
+                source_account_id VARCHAR(64) NOT NULL COMMENT '源闲鱼账号ID',
+                target_account_id VARCHAR(64) NOT NULL COMMENT '目标闲鱼账号ID',
+                status VARCHAR(20) NOT NULL DEFAULT 'prepared' COMMENT '状态: prepared/running/paused/done/cancelled',
+                description_template TEXT COMMENT '描述模板(支持{title}占位符)',
+                total INT DEFAULT 0 COMMENT '商品总数',
+                published INT DEFAULT 0 COMMENT '已发布数',
+                failed INT DEFAULT 0 COMMENT '失败数',
+                min_interval INT DEFAULT 180 COMMENT '最小间隔秒',
+                max_interval INT DEFAULT 600 COMMENT '最大间隔秒',
+                next_run_at DATETIME NULL COMMENT '下一次发布时间',
+                last_error TEXT COMMENT '最近错误',
+                started_at DATETIME NULL COMMENT '开始时间',
+                finished_at DATETIME NULL COMMENT '完成时间',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_mig_batch_owner_status (owner_id, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品迁移批次表';
+        """,
+
+        "xy_migration_tasks": """
+            CREATE TABLE IF NOT EXISTS xy_migration_tasks (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '任务ID',
+                batch_id BIGINT NOT NULL COMMENT '批次ID',
+                source_item_id VARCHAR(64) NOT NULL COMMENT '源商品ID',
+                title VARCHAR(255) NOT NULL COMMENT '商品标题',
+                price VARCHAR(32) NULL COMMENT '价格',
+                category_id VARCHAR(32) NULL COMMENT '类目ID',
+                description TEXT COMMENT '发布描述(可编辑)',
+                images_json LONGTEXT COMMENT '原始CDN图片URL列表(JSON)',
+                local_images_json LONGTEXT COMMENT '本地化图片路径列表(JSON)',
+                status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '状态: pending/publishing/done/failed/skipped',
+                new_item_id VARCHAR(64) NULL COMMENT '发布后的新商品ID',
+                error TEXT COMMENT '错误信息',
+                attempts INT DEFAULT 0 COMMENT '已尝试次数',
+                max_attempts INT DEFAULT 2 COMMENT '最大尝试次数',
+                published_at DATETIME NULL COMMENT '发布完成时间',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_mig_task_batch_status (batch_id, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品迁移任务表';
+        """,
+
+        "xy_migration_card_maps": """
+            CREATE TABLE IF NOT EXISTS xy_migration_card_maps (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
+                batch_id BIGINT NOT NULL COMMENT '批次ID',
+                source_card_id BIGINT NOT NULL COMMENT '源卡券ID',
+                new_card_id BIGINT NOT NULL COMMENT '新卡券ID',
+                card_name VARCHAR(255) NULL COMMENT '卡券名称',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                INDEX idx_mig_cardmap_batch (batch_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='迁移卡券映射表';
         """,
 
         # 29. 对接记录表
@@ -1973,7 +2062,131 @@ class DatabaseInitializer:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='在线聊天快捷短语';
         """,
 
-        # 52. AI铺货配置表
+        # 52. 线索采集任务配置表（只读监控别人商品评论区的高意向需求，无自动触达能力）
+        "xy_lead_capture_tasks": """
+            CREATE TABLE IF NOT EXISTS xy_lead_capture_tasks (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                name VARCHAR(100) NOT NULL COMMENT '任务名称',
+                source_type VARCHAR(20) NOT NULL DEFAULT 'monitor' COMMENT '候选来源：monitor-复用商品监控采集池，keyword-独立关键词搜索',
+                keyword VARCHAR(200) DEFAULT NULL COMMENT 'source_type=keyword 时的搜索词',
+                monitor_task_id BIGINT DEFAULT NULL COMMENT 'source_type=monitor 时关联的 xy_listing_monitor_tasks.id',
+                price_min DECIMAL(12,2) DEFAULT NULL COMMENT '候选商品价格区间最低值',
+                price_max DECIMAL(12,2) DEFAULT NULL COMMENT '候选商品价格区间最高值',
+                interval_minutes INT NOT NULL DEFAULT 60 COMMENT '扫描间隔分钟（最低30）',
+                max_items_per_round INT NOT NULL DEFAULT 5 COMMENT '每轮扫描商品数上限（最高10）',
+                comment_pages_per_item INT NOT NULL DEFAULT 1 COMMENT '每商品每次读取评论页数（固定1）',
+                include_weak TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否入库弱意向评论',
+                account_ids JSON DEFAULT NULL COMMENT '读取用账号ID列表（只读借用Cookie）',
+                rescan_cooldown_hours INT NOT NULL DEFAULT 24 COMMENT '同一商品两次评论扫描最小间隔小时',
+                is_enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用任务',
+                is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除（软删除）',
+                last_run_at DATETIME DEFAULT NULL COMMENT '最近一次执行时间',
+                remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_lct_owner_id (owner_id),
+                INDEX idx_lct_owner_enabled (owner_id, is_enabled),
+                INDEX idx_lct_owner_deleted (owner_id, is_deleted)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索采集任务配置表';
+        """,
+
+        # 53. 线索商品池表
+        "xy_lead_items": """
+            CREATE TABLE IF NOT EXISTS xy_lead_items (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                item_id VARCHAR(64) NOT NULL COMMENT '闲鱼商品ID',
+                title VARCHAR(500) DEFAULT NULL COMMENT '商品标题',
+                price VARCHAR(32) DEFAULT NULL COMMENT '商品价格（展示文本）',
+                seller_nick VARCHAR(120) DEFAULT NULL COMMENT '卖家昵称',
+                seller_user_id VARCHAR(64) DEFAULT NULL COMMENT '卖家真实用户ID',
+                item_url VARCHAR(1000) DEFAULT NULL COMMENT '商品详情页URL',
+                pic_url VARCHAR(1000) DEFAULT NULL COMMENT '商品主图URL',
+                want_count VARCHAR(32) DEFAULT NULL COMMENT '想要数（展示文本）',
+                comment_count INT NOT NULL DEFAULT 0 COMMENT '已采集评论数',
+                strong_count INT NOT NULL DEFAULT 0 COMMENT '强意向评论数',
+                medium_count INT NOT NULL DEFAULT 0 COMMENT '中意向评论数',
+                demand_score INT NOT NULL DEFAULT 0 COMMENT '需求热度分=strong*3+medium',
+                first_seen_at DATETIME DEFAULT NULL COMMENT '首次发现时间',
+                last_seen_at DATETIME DEFAULT NULL COMMENT '最近一次扫描到时间',
+                last_comment_scan_at DATETIME DEFAULT NULL COMMENT '最近一次评论扫描时间',
+                status VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT '商品状态：active-观察中，archived-已归档',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uk_li_owner_item (owner_id, item_id),
+                INDEX idx_li_owner_id (owner_id),
+                INDEX idx_li_status_heat (owner_id, status, strong_count),
+                INDEX idx_li_last_scan (owner_id, last_comment_scan_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索商品池表';
+        """,
+
+        # 54. 线索评论表（核心表）
+        "xy_lead_comments": """
+            CREATE TABLE IF NOT EXISTS xy_lead_comments (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                lead_item_id BIGINT NOT NULL COMMENT '关联 xy_lead_items.id',
+                comment_id VARCHAR(64) DEFAULT NULL COMMENT '平台评论ID',
+                commenter_name VARCHAR(120) DEFAULT NULL COMMENT '评论人昵称',
+                commenter_user_id VARCHAR(64) DEFAULT NULL COMMENT '评论人用户ID',
+                content VARCHAR(1000) NOT NULL COMMENT '评论内容',
+                comment_time DATETIME DEFAULT NULL COMMENT '评论发布时间',
+                intent_level VARCHAR(10) NOT NULL DEFAULT 'weak' COMMENT '意向层级：strong/medium/weak',
+                intent_keywords JSON DEFAULT NULL COMMENT '命中的关键词列表',
+                dedupe_hash VARCHAR(64) NOT NULL COMMENT '去重哈希',
+                status VARCHAR(20) NOT NULL DEFAULT 'new' COMMENT '处理状态：new/reviewed/ignored/followed',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uk_lc_dedupe (owner_id, dedupe_hash),
+                INDEX idx_lc_item_intent (lead_item_id, intent_level, status),
+                INDEX idx_lc_owner_status (owner_id, status),
+                INDEX idx_lc_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索评论表';
+        """,
+
+        # 55. 线索人工动作流水表
+        "xy_lead_actions": """
+            CREATE TABLE IF NOT EXISTS xy_lead_actions (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                lead_comment_id BIGINT NOT NULL COMMENT '关联 xy_lead_comments.id',
+                action_type VARCHAR(20) NOT NULL COMMENT '动作类型：opened/copied/ignored/followed',
+                suggested_reply VARCHAR(1000) DEFAULT NULL COMMENT '当时展示/复制的建议话术',
+                operator VARCHAR(64) DEFAULT NULL COMMENT '操作人用户名',
+                note VARCHAR(500) DEFAULT NULL COMMENT '备注',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_la_comment (lead_comment_id),
+                INDEX idx_la_owner (owner_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索人工动作流水表';
+        """,
+
+        # 56. 线索扫描执行日志表
+        "xy_lead_scan_logs": """
+            CREATE TABLE IF NOT EXISTS xy_lead_scan_logs (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                task_id BIGINT NOT NULL COMMENT '关联的线索采集任务ID',
+                owner_id BIGINT DEFAULT NULL COMMENT '归属用户ID',
+                task_name VARCHAR(100) DEFAULT NULL COMMENT '任务名称',
+                trigger_type VARCHAR(10) NOT NULL DEFAULT 'auto' COMMENT '触发方式：auto/manual',
+                account_id VARCHAR(80) DEFAULT NULL COMMENT '本次使用的读取账号ID',
+                scanned_count INT NOT NULL DEFAULT 0 COMMENT '本次扫描的商品数',
+                comment_fetched INT NOT NULL DEFAULT 0 COMMENT '本次获取的评论数',
+                comment_new INT NOT NULL DEFAULT 0 COMMENT '本次新增入库的评论数',
+                strong_new INT NOT NULL DEFAULT 0 COMMENT '本次新增的强意向评论数',
+                risk_triggered TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否触发风控',
+                status VARCHAR(20) NOT NULL DEFAULT 'success' COMMENT '执行状态：success/failed/partial/risk_stopped',
+                message VARCHAR(1000) DEFAULT NULL COMMENT '执行结果说明',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_lsl_task (task_id),
+                INDEX idx_lsl_owner (owner_id),
+                INDEX idx_lsl_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线索扫描执行日志表';
+        """,
+
+        # 57. AI铺货配置表
         "xy_ai_listing_configs": """
             CREATE TABLE IF NOT EXISTS xy_ai_listing_configs (
                 id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
@@ -2000,7 +2213,7 @@ class DatabaseInitializer:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI铺货配置表';
         """,
 
-        # 53. AI铺货任务表
+        # 58. AI铺货任务表
         "xy_ai_listing_tasks": """
             CREATE TABLE IF NOT EXISTS xy_ai_listing_tasks (
                 id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
@@ -2026,7 +2239,7 @@ class DatabaseInitializer:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI铺货任务表';
         """,
 
-        # 54. AI铺货任务明细表
+        # 59. AI铺货任务明细表
         "xy_ai_listing_task_items": """
             CREATE TABLE IF NOT EXISTS xy_ai_listing_task_items (
                 id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
@@ -2250,6 +2463,12 @@ class DatabaseInitializer:
             ("ai_prompt", "TEXT COMMENT '商品AI提示词'", "price"),
             ("is_polished", "TINYINT(1) DEFAULT 0 COMMENT '是否擦亮'", "ai_prompt"),
             ("updated_at", "DATETIME COMMENT '更新时间'", "created_at"),
+            (
+                "live_status",
+                "VARCHAR(16) NOT NULL DEFAULT 'on_sale' COMMENT '平台在售状态：on_sale-在售/off_shelf-已下架/sold_out-已卖出/deleted-已删除'",
+                "is_polished",
+            ),
+            ("off_shelf_at", "DATETIME DEFAULT NULL COMMENT '确认不在售时间'", "live_status"),
         ],
         "xy_announcements": [
             ("is_deleted", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除'", "content"),
@@ -2280,6 +2499,9 @@ class DatabaseInitializer:
         ],
         "xy_account_login_logs": [
             ("updated_cookie_names", "VARCHAR(500) DEFAULT NULL COMMENT '接口续期更新的Cookie字段名（逗号分隔）'", "error_message"),
+        ],
+        "xy_migration_tasks": [
+            ("category_override_json", "TEXT DEFAULT NULL COMMENT '类目覆盖(JSON)'", "category_id"),
         ],
     }
 

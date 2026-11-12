@@ -56,6 +56,9 @@ class MessageHandler:
         self._on_order_message: Optional[Callable] = None
         self._on_card_message: Optional[Callable] = None  # 卡片消息回调（小刀等）
         self._on_card_update_message: Optional[Callable] = None  # 卡片更新消息回调（付款状态变更等）
+
+        # 消息断流看门狗：最近一次成功解密的业务帧时间戳（实例创建时刻作为基线）
+        self.last_decrypt_ts = time.time()
     
     def _load_message_expire_time(self) -> int:
         """从数据库加载当前账号的相同消息等待时间配置（参照旧框架）"""
@@ -569,6 +572,11 @@ class MessageHandler:
     async def handle_message(self, message_data: dict, websocket) -> bool:
         """处理消息"""
         try:
+            # 同步检查点持久化（pts 续传用）：从每一帧里提取同步 pts 落 Redis，
+            # 供重连时 /reg + ackDiff 续传，避免"失忆式重注册"丢失断连窗口消息。
+            # 纯旁路：提取不到或异常都静默，不阻断 ACK 与消息处理（fail-open）
+            await self._record_sync_checkpoint(message_data)
+
             # 发送ACK确认消息（参照旧框架，必须发送否则服务器会断开连接）
             await self._send_ack(message_data, websocket)
             
@@ -590,6 +598,17 @@ class MessageHandler:
             logger.error(f"【{self.cookie_id}】处理消息异常: {safe_str(e)}")
             return False
     
+    async def _record_sync_checkpoint(self, message_data: dict) -> None:
+        """把帧里的同步 pts 落 Redis（重连续传用，旁路能力，永不阻断主流程）"""
+        try:
+            from app.services.xianyu.ws_sync_checkpoint import record_from_frame
+
+            got = await record_from_frame(self.cookie_id, message_data)
+            if got:
+                self.last_sync_pts = got.get("pts")
+        except Exception:
+            pass
+
     async def _send_ack(self, message_data: dict, websocket) -> None:
         """发送ACK确认消息（参照旧框架实现）
         
@@ -643,7 +662,8 @@ class MessageHandler:
                 # 过滤不需要打印的消息类型（如商品定价失败通知）
                 biz_type = parsed_data.get('bizType', '') if isinstance(parsed_data, dict) else ''
                 if biz_type not in ('IDLE_SPACE_PRICING',) and not self.is_system_tip_message(parsed_data):
-                    logger.warning(f"【{self.cookie_id}】解密消息: {json.dumps(parsed_data, ensure_ascii=False)}")
+                    logger.warning(f"【{self.cookie_id}】解密消息: {json.dumps(parsed_data, ensure_ascii=False)[:1000]}")
+                self.last_decrypt_ts = time.time()  # 看门狗：记录业务帧活跃
                 return parsed_data
             except Exception:
                 # base64解码失败，尝试使用decrypt解密
@@ -651,7 +671,8 @@ class MessageHandler:
                 # 过滤不需要打印的消息类型
                 biz_type = decrypted.get('bizType', '') if isinstance(decrypted, dict) else ''
                 if biz_type not in ('IDLE_SPACE_PRICING',) and not self.is_system_tip_message(decrypted):
-                    logger.info(f"【{self.cookie_id}】解密消息: {json.dumps(decrypted, ensure_ascii=False)}")
+                    logger.info(f"【{self.cookie_id}】解密消息: {json.dumps(decrypted, ensure_ascii=False)[:1000]}")
+                self.last_decrypt_ts = time.time()  # 看门狗：记录业务帧活跃
                 return decrypted
         except Exception as e:
             logger.debug(f"【{self.cookie_id}】消息解密失败: {safe_str(e)}")

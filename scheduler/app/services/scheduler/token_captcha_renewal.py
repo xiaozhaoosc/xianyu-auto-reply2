@@ -85,6 +85,7 @@ async def solve_token_captcha_and_merge_cookies(
         url=verification_url,
         cookies=cookies_str,
         device_id=device_id,
+        source=f"scheduler·{task_name}",
     )
     if not result.get("success"):
         result_data = result.get("data")

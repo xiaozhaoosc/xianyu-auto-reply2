@@ -99,8 +99,13 @@ class CookiesRefreshTaskService:
         return now + timedelta(seconds=random.randint(0, 30))
 
     def _build_success_expire_at(self, now: datetime) -> datetime:
-        """生成续期成功后的随机到期时间（1-5分钟后）。"""
-        return now + timedelta(seconds=random.randint(60, 300))
+        """生成续期成功后的随机到期时间（3-5小时后）。
+
+        在线账号的 Cookie 由 WebSocket 心跳与 mtop 响应 set-cookie 自动滚动续期，
+        浏览器续期只需兜底防止长期静默导致登录态失效。过高的续期频率会形成
+        同 IP 高频模式化浏览器会话，反而加剧风控。
+        """
+        return now + timedelta(seconds=random.randint(3 * 3600, 5 * 3600))
 
     async def _get_eligible_accounts(self, session: AsyncSession) -> list[XYAccount]:
         """查询所有未删除的账号（包含启用和禁用状态）。"""

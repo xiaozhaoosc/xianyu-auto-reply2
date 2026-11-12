@@ -18,6 +18,8 @@ from common.services.captcha.concurrency import run_browser_task
 from common.services.captcha.token_account_context import resolve_external_captcha_token_account_id
 from common.services.captcha.slider_mode import (
     SLIDER_MODE_REAL_MOUSE,
+    load_manual_wait_seconds,
+    load_slider_notify_config,
     refresh_slider_mode_from_database,
 )
 from common.services.captcha.weighted_runner import real_mouse_weighted_runner
@@ -127,6 +129,7 @@ class SolveCaptchaRequest(BaseModel):
     token_user_id: str = ""       # Token 缓存用户 ID
     persist_token_cache: bool = False # 是否由 WebSocket 端完成 Token 缓存写入
     token_cache_write_mode: str = "renewal" # renewal-条件续期 / upsert-基础缓存新增或更新
+    source: str = ""                     # 触发场景标注（用于滑块人工告警，如 "scheduler·Token续期任务"）
 
 
 @router.post("/logs/retention")
@@ -396,6 +399,12 @@ async def solve_captcha(request: SolveCaptchaRequest):
     timeout = max(20, min(int(request.browser_timeout or 40), 120))
     call_type = (request.call_type or "remote").strip() or "remote"
     call_user = (request.call_user or "").strip() or None
+    source_label = (request.source or "").strip() or "远程过滑块接口"
+    try:
+        from common.services.captcha.trigger_context import set_trigger_source
+        set_trigger_source(raw_id, f"外部接口调用·{source_label}")
+    except Exception:
+        pass
     existing_cookies_str = (request.cookies or "").strip()
     device_id = (request.device_id or "").strip()
     refetched_token_result: dict[str, object] = {}
@@ -711,6 +720,8 @@ async def solve_captcha(request: SolveCaptchaRequest):
             safe_id, url, True, False, timeout, existing_cookies_str, url_provider,
         )
         selected_slider_mode = await refresh_slider_mode_from_database()
+        manual_wait_seconds = await load_manual_wait_seconds()
+        smtp_config, notify_email = await load_slider_notify_config()
         if selected_slider_mode == SLIDER_MODE_REAL_MOUSE:
             # 被调用方请求在线程池之前参与本地/远程实时加权排队。
             success, cookies, engine = await real_mouse_weighted_runner.submit(
@@ -719,6 +730,9 @@ async def solve_captcha(request: SolveCaptchaRequest):
                 *slider_args,
                 weight_class=weight_class,
                 slider_mode=selected_slider_mode,
+                manual_wait_seconds=manual_wait_seconds,
+                smtp_config=smtp_config,
+                notify_email=notify_email,
             )
         else:
             success, cookies, engine = await run_browser_task(
@@ -726,6 +740,9 @@ async def solve_captcha(request: SolveCaptchaRequest):
                 *slider_args,
                 weight_class=weight_class,
                 slider_mode=selected_slider_mode,
+                manual_wait_seconds=manual_wait_seconds,
+                smtp_config=smtp_config,
+                notify_email=notify_email,
             )
     except asyncio.CancelledError:
         cancelled_cookies = refetched_token_result.get("new_cookies")
