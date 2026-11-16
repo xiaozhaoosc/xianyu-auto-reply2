@@ -1612,7 +1612,7 @@ class OrderStatusChecker:
             
             # 解析订单状态节点
             status_nodes = self._extract_order_status_nodes(raw_response)
-            
+
             # 如果状态节点为空，尝试从 orderStatusInfo 获取状态
             if not status_nodes:
                 order_status_title = self._extract_order_status_title(raw_response)
@@ -1632,7 +1632,29 @@ class OrderStatusChecker:
                             'reason': '订单已交易成功',
                             'order_status': order_status_title
                         }
-                
+                    elif '待发货' in order_status_title or '待卖家发货' in order_status_title:
+                        # orderStatusInfo.title 包含"待发货"关键字，允许发货
+                        logger.info(f"订单 {order_id} 通过 orderStatusInfo.title 判定可发货: {order_status_title}")
+                        return {
+                            'success': True,
+                            'can_ship': True,
+                            'reason': f'状态匹配（{order_status_title}）',
+                            'order_status': order_status_title
+                        }
+
+                # 状态节点和标题都解析失败时，记录原始响应的关键字段以便排查
+                try:
+                    data_section = raw_response.get('data', {})
+                    components = data_section.get('components', [])
+                    render_types = [c.get('render', '') for c in components]
+                    logger.warning(
+                        f"账号 {self.account_id or '未知'} 订单 {order_id} 状态节点解析失败，"
+                        f"components renders={render_types}, "
+                        f"data_keys={list(data_section.keys())[:10]}"
+                    )
+                except Exception:
+                    logger.warning(f"订单 {order_id} 状态节点解析失败，且原始响应日志记录异常")
+
                 return {
                     'success': False,
                     'can_ship': False,
@@ -1710,6 +1732,19 @@ class OrderStatusChecker:
                             'order_status': order_status_title
                         }
                 
+                # 状态节点和标题都解析失败时，记录原始响应的关键字段以便排查
+                try:
+                    data_section = raw_response.get('data', {})
+                    components = data_section.get('components', [])
+                    render_types = [c.get('render', '') for c in components]
+                    logger.warning(
+                        f"账号 {self.account_id or '未知'} 订单 {order_id} 评价状态节点解析失败，"
+                        f"components renders={render_types}, "
+                        f"data_keys={list(data_section.keys())[:10]}"
+                    )
+                except Exception:
+                    logger.warning(f"订单 {order_id} 评价状态节点解析失败，且原始响应日志记录异常")
+
                 return {
                     'success': False,
                     'can_rate': False,

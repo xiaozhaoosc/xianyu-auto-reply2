@@ -1,6 +1,7 @@
 package com.xyun.platform.common.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Getter;
@@ -14,14 +15,15 @@ import java.time.LocalDateTime;
  */
 @Getter
 @Setter
-@TableName("xy_system_settings")
+@TableName(value = "xy_system_settings", autoResultMap = true)
 public class XySystemSetting implements Serializable {
 
-    /** 设置键（主键，手动输入） */
-    @TableId(type = IdType.INPUT)
+    /** 设置键（主键，手动输入）— key 是 MySQL 保留字，需反引号转义 */
+    @TableId(value = "`key`", type = IdType.INPUT)
     private String key;
 
-    /** 设置值 */
+    /** 设置值 — value 是 MySQL 保留字，需反引号转义 */
+    @TableField(value = "`value`")
     private String value;
 
     /** 设置描述 */

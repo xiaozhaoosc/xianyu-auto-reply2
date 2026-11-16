@@ -56,9 +56,10 @@ import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import request from '@/api/request'
 
-const getMaterials = (params: any) => request.get('/materials', { params })
-const createMaterial = (data: any) => request.post('/materials', data)
-const deleteMaterial = (id: number) => request.delete(`/materials/${id}`)
+// 素材 API — 路径与后端 ProductController 一致
+const getMaterials = (params: any) => request.get('/product-materials', { params })
+const createMaterial = (data: any) => request.post('/product-materials', data)
+const deleteMaterial = (id: number) => request.delete(`/product-materials/${id}`)
 
 const searchText = ref('')
 const loading = ref(false)

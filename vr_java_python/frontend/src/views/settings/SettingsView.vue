@@ -47,6 +47,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import request from '@/api/request'
 
+// 系统设置 API — 后端为 key-value 存储
 const getSettings = () => request.get('/settings')
 const updateSettings = (data: any) => request.put('/settings', data)
 
@@ -67,24 +68,42 @@ const notifyForm = reactive({
   cookieExpireNotify: true,
 })
 
+/** 从后端 key-value 映射还原表单值 */
+const applySettings = (data: Record<string, string>) => {
+  if (data.systemName !== undefined) form.systemName = data.systemName
+  if (data.autoReplyEnabled !== undefined) form.autoReplyEnabled = data.autoReplyEnabled === 'true'
+  if (data.autoDeliveryEnabled !== undefined) form.autoDeliveryEnabled = data.autoDeliveryEnabled === 'true'
+  if (data.cookieRefreshInterval !== undefined) form.cookieRefreshInterval = Number(data.cookieRefreshInterval)
+  if (data.orderSyncInterval !== undefined) form.orderSyncInterval = Number(data.orderSyncInterval)
+  if (data.orderNotifyEnabled !== undefined) notifyForm.orderNotifyEnabled = data.orderNotifyEnabled === 'true'
+  if (data.webhookUrl !== undefined) notifyForm.webhookUrl = data.webhookUrl
+  if (data.cookieExpireNotify !== undefined) notifyForm.cookieExpireNotify = data.cookieExpireNotify === 'true'
+}
+
 const loadSettings = async () => {
   try {
     const res: any = await getSettings()
     if (res.data) {
-      Object.assign(form, res.data)
-      if (res.data.notify) {
-        Object.assign(notifyForm, res.data.notify)
-      }
+      applySettings(res.data)
     }
   } catch {
     // 首次加载失败使用默认值
   }
 }
 
+/** 将表单值转为 key-value 映射 */
+const toKeyValue = (obj: Record<string, any>) => {
+  const map: Record<string, string> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    map[k] = String(v)
+  }
+  return map
+}
+
 const handleSave = async () => {
   saving.value = true
   try {
-    await updateSettings(form)
+    await updateSettings(toKeyValue(form))
     message.success('设置已保存')
   } finally {
     saving.value = false
@@ -94,7 +113,7 @@ const handleSave = async () => {
 const handleSaveNotify = async () => {
   savingNotify.value = true
   try {
-    await updateSettings({ notify: notifyForm })
+    await updateSettings(toKeyValue(notifyForm))
     message.success('通知设置已保存')
   } finally {
     savingNotify.value = false

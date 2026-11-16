@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -21,6 +23,21 @@ import java.util.Map;
 public class AuthService {
 
     private final XyUserMapper userMapper;
+
+    /** 将明文密码进行 MD5 哈希 */
+    private String md5(String input) {
+        try {
+            var digest = MessageDigest.getInstance("MD5");
+            var bytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            var sb = new StringBuilder();
+            for (var b : bytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("MD5 哈希失败", e);
+        }
+    }
 
     /** 用户登录，校验用户名密码后通过 Sa-Token 建立会话 */
     public Map<String, Object> login(String username, String password) {
@@ -46,8 +63,9 @@ public class AuthService {
             throw new BusinessException(403, "账号已被删除");
         }
 
-        // 校验密码（简单比对，生产环境应使用 BCrypt）
-        if (!password.equals(user.getPasswordHash())) {
+        // 校验密码：前端传明文，数据库存 MD5 哈希
+        var passwordMd5 = md5(password);
+        if (!passwordMd5.equals(user.getPasswordHash())) {
             throw new BusinessException(401, "用户名或密码错误");
         }
 

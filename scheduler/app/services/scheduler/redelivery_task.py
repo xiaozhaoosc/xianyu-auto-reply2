@@ -527,15 +527,40 @@ class RedeliveryTask:
                 return False, "订单缺少商品ID", cookie_string
             if not order.buyer_id:
                 return False, "订单缺少买家ID", cookie_string
+
+            # 占位chat_id（创建会话失败时写入的）需要检查是否已过期
+            # 超过 30 分钟的占位ID清除后重新尝试创建会话，避免永久跳过
+            if order.chat_id and order.chat_id.startswith("FAILED_"):
+                # 检查占位ID是否已过期（通过 updated_at 字段判断，updated_at 带 timezone）
+                placeholder_age_minutes = 999.0
+                if order.updated_at:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc)
+                    updated = order.updated_at
+                    if updated.tzinfo is None:
+                        updated = updated.replace(tzinfo=timezone.utc)
+                    placeholder_age_minutes = (now - updated).total_seconds() / 60
+
+                if placeholder_age_minutes < 30:
+                    logger.info(
+                        f"[定时补发货] 订单 {order.order_no} 占位会话ID未过期（{placeholder_age_minutes:.0f}分钟），跳过发货"
+                    )
+                    return False, f"会话创建失败（占位ID，{placeholder_age_minutes:.0f}分钟前），跳过发货", cookie_string
+
+                # 占位ID已过期，清除后重新尝试创建会话
+                logger.info(
+                    f"[定时补发货] 订单 {order.order_no} 占位会话ID已过期（{placeholder_age_minutes:.0f}分钟），清除后重新创建"
+                )
+                order.chat_id = None
+                from common.services.order_service import OrderService
+                order_svc = OrderService(session)
+                await order_svc.update_order_chat_id(order.order_no, None)
+
             # 订单缺少会话ID时，先调用 WebSocket 服务自动创建会话并回写，再继续发货
             if not order.chat_id:
                 chat_ok, chat_error = await self._ensure_chat_id(session, order)
                 if not chat_ok:
                     return False, chat_error or "订单缺少会话ID", cookie_string
-            
-            # 占位chat_id（创建会话失败时写入的）不能用于发货
-            if order.chat_id and order.chat_id.startswith("FAILED_"):
-                return False, "会话创建失败（占位ID），跳过发货", cookie_string
             
             # 检查是否有匹配的卡券
             card = await self._get_matching_card(session, order)

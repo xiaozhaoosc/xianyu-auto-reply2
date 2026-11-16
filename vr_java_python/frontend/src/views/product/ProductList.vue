@@ -45,11 +45,11 @@ import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import request from '@/api/request'
 
-// 商品 API（独立于其他模块）
-const getProducts = (params: any) => request.get('/products', { params })
-const createProduct = (data: any) => request.post('/products', data)
-const updateProduct = (id: number, data: any) => request.put(`/products/${id}`, data)
-const deleteProduct = (id: number) => request.delete(`/products/${id}`)
+// 商品 API — 路径与后端 ProductController 一致
+const getProducts = (params: any) => request.get('/catalog-items', { params })
+const createProduct = (data: any) => request.post('/catalog-items', data)
+const updateProduct = (id: number, data: any) => request.put(`/catalog-items/${id}`, data)
+const deleteProduct = (id: number) => request.delete(`/catalog-items/${id}`)
 
 const searchText = ref('')
 const loading = ref(false)

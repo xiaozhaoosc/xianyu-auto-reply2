@@ -47,8 +47,8 @@ public class XyProductMaterial extends BaseEntity {
     /** 品牌 */
     private String brand;
 
-    /** 成色/状况 */
-    private String condition;
+    /** 成色/状况 — 原 condition 列已重命名为 item_condition，避免 MySQL 保留字冲突 */
+    private String itemCondition;
 
     /** 备注 */
     private String remark;

@@ -1,0 +1,152 @@
+{
+  "total": 29,
+  "passed": 2,
+  "failed": 27,
+  "results": [
+    {
+      "name": "后端健康检查",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "Scheduler 健康检查",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "登录 admin/123456",
+      "status": "FAIL",
+      "detail": "token=无"
+    },
+    {
+      "name": "错误密码拒绝",
+      "status": "PASS",
+      "detail": "code=None"
+    },
+    {
+      "name": "空用户名拒绝",
+      "status": "PASS",
+      "detail": "code=None"
+    },
+    {
+      "name": "获取用户信息",
+      "status": "FAIL",
+      "detail": "username=?"
+    },
+    {
+      "name": "无Token访问拒绝",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "创建账号",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "账号列表",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "创建关键词规则",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "关键词规则列表",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "创建卡券",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "卡券列表",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "订单列表",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "商品列表",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "分销对接列表",
+      "status": "FAIL",
+      "detail": "code=None"
+    },
+    {
+      "name": "前端-登录页",
+      "status": "FAIL",
+      "detail": "/login -> 非200"
+    },
+    {
+      "name": "前端-工作台",
+      "status": "FAIL",
+      "detail": "/dashboard -> 非200"
+    },
+    {
+      "name": "前端-账号管理",
+      "status": "FAIL",
+      "detail": "/accounts -> 非200"
+    },
+    {
+      "name": "前端-关键词规则",
+      "status": "FAIL",
+      "detail": "/keyword-rules -> 非200"
+    },
+    {
+      "name": "前端-发货规则",
+      "status": "FAIL",
+      "detail": "/delivery-rules -> 非200"
+    },
+    {
+      "name": "前端-默认回复",
+      "status": "FAIL",
+      "detail": "/default-replies -> 非200"
+    },
+    {
+      "name": "前端-卡券管理",
+      "status": "FAIL",
+      "detail": "/cards -> 非200"
+    },
+    {
+      "name": "前端-订单管理",
+      "status": "FAIL",
+      "detail": "/orders -> 非200"
+    },
+    {
+      "name": "前端-商品管理",
+      "status": "FAIL",
+      "detail": "/products -> 非200"
+    },
+    {
+      "name": "前端-素材库",
+      "status": "FAIL",
+      "detail": "/materials -> 非200"
+    },
+    {
+      "name": "前端-分销对接",
+      "status": "FAIL",
+      "detail": "/dock-records -> 非200"
+    },
+    {
+      "name": "前端-系统设置",
+      "status": "FAIL",
+      "detail": "/settings -> 非200"
+    },
+    {
+      "name": "前端代理登录",
+      "status": "FAIL",
+      "detail": "通过 9000 端口代理到后端"
+    }
+  ]
+}
