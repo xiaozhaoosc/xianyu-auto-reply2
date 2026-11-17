@@ -1,10 +1,9 @@
 """
-高德宝贝所在地输入提示服务。
+amap_inputtips_service 的网页后端兼容导出。
 
 功能：
-1. 按闲鱼卖家工作台网页 SDK 参数调用高德 inputtips 接口。
-2. 将高德 POI 提示转换为前端所在地选择所需的稳定结构。
-3. 将网络或高德业务错误转换为明确的中文业务异常，不返回模拟数据。
+1. 保留原 app.services 导入路径；
+2. 统一复用 common 中的实现，避免跨服务复制业务逻辑。
 """
 from __future__ import annotations
 
@@ -131,23 +130,24 @@ class AmapInputTipsService:
         except Exception as exc:
             logger.warning(f"高德所在地搜索请求失败: keywords={normalized_keywords}, error={exc}")
             raise AmapInputTipsError("所在地搜索接口请求失败，请稍后重试") from exc
+from common.services.amap_inputtips_service import (
+    REQUEST_TIMEOUT_SECONDS,
+    AMAP_INPUTTIPS_URL,
+    AMAP_WEB_KEY,
+    AMAP_APP_NAME,
+    AMAP_ORIGIN,
+    AmapInputTipsError,
+    _as_text,
+    _parse_tip,
+    AmapInputTipsService,
+)
 
-        logger.info(
-            f"高德inputtips接口完整返回: keywords={normalized_keywords}, "
-            f"response={json.dumps(body, ensure_ascii=False, default=str)}"
-        )
-        if not isinstance(body, dict) or str(body.get("status")) != "1":
-            info = _as_text(body.get("info")) if isinstance(body, dict) else ""
-            infocode = _as_text(body.get("infocode")) if isinstance(body, dict) else ""
-            logger.warning(
-                f"高德所在地搜索业务失败: keywords={normalized_keywords}, "
-                f"info={info}, infocode={infocode}"
-            )
-            raise AmapInputTipsError(f"所在地搜索失败：{info or '高德接口未返回成功状态'}")
-
-        tips = [
-            parsed_tip
-            for raw_tip in (body.get("tips") or [])
-            if (parsed_tip := _parse_tip(raw_tip)) is not None
-        ]
-        return {"tips": tips, "count": len(tips), "keywords": normalized_keywords}
+__all__ = [
+    "REQUEST_TIMEOUT_SECONDS",
+    "AMAP_INPUTTIPS_URL",
+    "AMAP_WEB_KEY",
+    "AMAP_APP_NAME",
+    "AMAP_ORIGIN",
+    "AmapInputTipsError",
+    "AmapInputTipsService",
+]

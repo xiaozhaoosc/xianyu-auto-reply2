@@ -33,7 +33,9 @@ from common.db.scheduled_publish_rule_schema import ensure_scheduled_publish_rul
 from common.db.payment_schema import ensure_payment_schema
 from common.db.item_query_indexes import ensure_item_query_indexes
 from common.db.api_keyword_schema import ensure_api_keyword_schema
+from common.db.notification_schema import ensure_notification_schema
 from common.db.session import async_engine, async_session_maker
+from common.services.notification_types import NOTIFICATION_TYPE_DICTIONARY
 from common.utils.time_utils import get_beijing_now_naive
 from common.utils.security import generate_secret_key, get_password_hash
 
@@ -937,6 +939,7 @@ class DatabaseInitializer:
                 channel_type VARCHAR(32) NOT NULL COMMENT '渠道类型',
                 config JSON COMMENT '渠道配置',
                 enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+                is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否删除：0-正常，1-已删除',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                 INDEX idx_owner_id (owner_id),
@@ -953,11 +956,15 @@ class DatabaseInitializer:
                 account_identifier VARCHAR(80) NOT NULL COMMENT '账号标识',
                 channel_id BIGINT NOT NULL COMMENT '渠道ID',
                 enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+                notify_types VARCHAR(64) NOT NULL DEFAULT 'chat,delivery,account' COMMENT '订阅的通知类型，逗号分隔',
+                is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否删除：0-正常，1-已删除',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                 INDEX idx_owner_id (owner_id),
                 INDEX idx_account_pk (account_pk),
-                INDEX idx_channel_id (channel_id)
+                INDEX idx_channel_id (channel_id),
+                INDEX idx_msg_notify_owner_account_channel_deleted
+                    (owner_id, account_pk, channel_id, is_deleted, enabled, id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='消息通知表';
         """,
 
@@ -2518,6 +2525,10 @@ class DatabaseInitializer:
                     # 1. 创建所有表
                     await self.create_all_tables()
 
+                    # 通知查询依赖这些字段；缺失时必须阻止启动，避免通知静默中断。
+                    async with ddl_connection() as conn:
+                        await ensure_notification_schema(conn)
+
                     # 1.1 初始化所有枚举数据字典
                     await self.init_data_dictionaries()
 
@@ -2643,6 +2654,10 @@ class DatabaseInitializer:
             ("payment_target_kind", "qrcode", "二维码", 10),
             ("payment_target_kind", "payurl", "支付链接", 20),
             ("payment_target_kind", "urlscheme", "应用协议链接", 30),
+            # 通知事件类型：网页展示名称和后端允许值统一由字典维护。
+            (NOTIFICATION_TYPE_DICTIONARY, "chat", "聊天消息", 10),
+            (NOTIFICATION_TYPE_DICTIONARY, "delivery", "自动发货", 20),
+            (NOTIFICATION_TYPE_DICTIONARY, "account", "账号状态", 30),
         )
         async with ddl_connection() as conn:
             for dict_type, dict_value, dict_label, sort_order in items:

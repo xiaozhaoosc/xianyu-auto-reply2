@@ -1,28 +1,26 @@
 """
-闲鱼卖家后台（鱼小铺）商品载荷构造器。
+xianyu_item_payload_builder 的网页后端兼容导出。
 
 功能：
-1. 集中构造 idleitem.publish（发布）与 idleitem.edit（编辑）共用的 inputJson 载荷；
-2. 上传商品图片/视频封面、按高德解析宝贝所在地、组装平台分类与属性标签；
-3. 编辑场景可传入平台 editdetail 快照，未改动的图片/地址/运费直接复用，避免重传与重解析。
-
-说明：
-- 本文件从 xianyu_direct_publisher.py 抽取而来，行为与原发布逻辑保持一致；
-- 编辑接口与发布接口的 inputJson 字段集完全相同（抓包已确认），故共用同一构造器。
+1. 保留原 app.services 导入路径；
+2. 统一复用 common 中的实现，避免跨服务复制业务逻辑。
 """
 from __future__ import annotations
 
-import time
-from pathlib import Path
-from typing import Any
-
-from app.services.amap_inputtips_service import AmapInputTipsError, AmapInputTipsService
-from app.services.xianyu_direct_payload import (
+from common.services.xianyu_item_payload_builder import (
+    MAX_IMAGE_COUNT,
+    _location_to_gps,
+    _address_match_score,
+    _resolve_item_address,
+    _build_category_label,
+    _build_attribute_labels,
+    _build_post_fee,
+    _resolve_post_fee,
+    _resolve_address,
+    _resolve_quantity,
+    _resolve_user_rights,
+    build_item_payload,
     DirectPublishError,
-    build_item_text_dto as _build_item_text_dto,
-    build_sku_payload as _build_sku_payload,
-    price_in_cent as _price_in_cent,
-    text as _text,
 )
 from app.services.xianyu_item_snapshot import (
     as_int,
@@ -280,22 +278,10 @@ def _resolve_quantity(item_data: dict[str, Any]) -> int:
 def _resolve_user_rights(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
     """解析要提交的服务承诺开关。
 
-    编辑场景复用平台快照，避免全量覆盖时把卖家已开启的极速发货/不符退款关掉；
-    发布场景（无快照）沿用抓包中的默认值：三项均关闭。
-
-    Args:
-        snapshot: editdetail 原始详情，发布场景为 None。
-    Returns:
-        list: userRightsProtocols 列表。
-    """
-    reused = snapshot_user_rights(snapshot)
-    if reused:
-        return reused
-    return [
-        {"enable": False, "serviceCode": "FAST_DELIVERY_48_HOUR"},
-        {"enable": False, "serviceCode": "FAST_DELIVERY_24_HOUR"},
-        {"enable": False, "serviceCode": "NONCONFORMITY_FREE_REFUND"},
-    ]
+__all__ = [
+    "DirectPublishError",
+    "build_item_payload",
+]
 
 
 async def build_item_payload(
